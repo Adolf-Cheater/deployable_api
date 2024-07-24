@@ -2,12 +2,12 @@ const express = require('express');
 const mysql = require('mysql');
 const bodyParser = require('body-parser');
 const levenshtein = require('fast-levenshtein');
-const bcrypt = require('bcrypt');
-const cors = require('cors');
+const bcrypt = require('bcrypt'); // Added bcrypt for hashing passwords
+const cors = require('cors'); // Added cors for handling cross-origin requests
 
 const app = express();
 app.use(bodyParser.json());
-app.use(cors());
+app.use(cors()); // Use cors middleware
 
 const db = mysql.createConnection({
   host: 'rm-2ze8y04111hiut0r60o.mysql.rds.aliyuncs.com',
@@ -48,56 +48,49 @@ app.get('/', (req, res) => {
   res.send('Server is running');
 });
 
-// User registration
-app.post('/register', async (req, res) => {
+app.post('/register', (req, res) => {
   const { username, password } = req.body;
 
-  if (!username || !password) {
-    return res.status(400).json({ message: 'Username and password are required' });
-  }
-
-  const hashedPassword = await bcrypt.hash(password, 10);
-
-  const query = 'INSERT INTO users (username, password) VALUES (?, ?)';
-  db.query(query, [username, hashedPassword], (err, results) => {
-    if (err) {
-      res.status(500).json({ error: err });
-    } else {
-      res.status(200).json({ message: 'User registered successfully' });
-    }
-  });
-});
-
-// User login
-app.post('/login', (req, res) => {
-  const { username, password } = req.body;
-
-  if (!username || !password) {
-    return res.status(400).json({ message: 'Username and password are required' });
-  }
-
-  const query = 'SELECT * FROM users WHERE username = ?';
-  db.query(query, [username], async (err, results) => {
+  bcrypt.hash(password, 10, (err, hash) => {
     if (err) {
       return res.status(500).json({ error: err });
     }
 
-    if (results.length === 0) {
-      return res.status(400).json({ message: 'Invalid username or password' });
-    }
+    const query = 'INSERT INTO users (username, password) VALUES (?, ?)';
+    db.query(query, [username, hash], (error, results) => {
+      if (error) {
+        console.error('Database query error:', error);
+        res.status(500).json({ error });
+      } else {
+        res.status(200).json({ message: 'User registered successfully', results });
+      }
+    });
+  });
+});
 
-    const user = results[0];
-    const isPasswordMatch = await bcrypt.compare(password, user.password);
+app.post('/login', (req, res) => {
+  const { username, password } = req.body;
 
-    if (isPasswordMatch) {
-      res.status(200).json({ message: 'Login successful' });
+  const query = 'SELECT * FROM users WHERE username = ?';
+  db.query(query, [username], (error, results) => {
+    if (error) {
+      console.error('Database query error:', error);
+      res.status(500).json({ error });
+    } else if (results.length > 0) {
+      const user = results[0];
+      bcrypt.compare(password, user.password, (err, result) => {
+        if (result) {
+          res.status(200).json({ message: 'Login successful' });
+        } else {
+          res.status(401).json({ message: 'Invalid username or password' });
+        }
+      });
     } else {
-      res.status(400).json({ message: 'Invalid username or password' });
+      res.status(401).json({ message: 'Invalid username or password' });
     }
   });
 });
 
-// Upload data
 app.post('/upload', (req, res) => {
   console.log('Received request:', req.body);
   let { name, value } = req.body;
