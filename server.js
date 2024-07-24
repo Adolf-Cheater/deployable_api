@@ -1,13 +1,12 @@
 const express = require('express');
 const mysql = require('mysql');
 const bodyParser = require('body-parser');
-const levenshtein = require('fast-levenshtein');
-const bcrypt = require('bcrypt'); // Added bcrypt for hashing passwords
-const cors = require('cors'); // Added cors for handling cross-origin requests
+const bcrypt = require('bcrypt');
+const cors = require('cors');
 
 const app = express();
 app.use(bodyParser.json());
-app.use(cors()); // Use cors middleware
+app.use(cors());
 
 const db = mysql.createConnection({
   host: 'rm-2ze8y04111hiut0r60o.mysql.rds.aliyuncs.com',
@@ -25,69 +24,40 @@ db.connect((err) => {
   console.log('Connected to database.');
 });
 
-const knownCategories = [
-  'Oil/Barrel', 'Gas/CubicMeter', 'Water/Liter' // Add more categories as needed
-];
-
-function getClosestCategory(input) {
-  let closestCategory = null;
-  let minDistance = Infinity;
-
-  knownCategories.forEach(category => {
-    const distance = levenshtein.get(input, category);
-    if (distance < minDistance) {
-      minDistance = distance;
-      closestCategory = category;
-    }
-  });
-
-  return (minDistance <= 2) ? closestCategory : input;
-}
-
 app.get('/', (req, res) => {
   res.send('Server is running');
 });
 
 app.post('/register', (req, res) => {
   const { username, password } = req.body;
+  const hashedPassword = bcrypt.hashSync(password, 10);
 
-  bcrypt.hash(password, 10, (err, hash) => {
-    if (err) {
-      return res.status(500).json({ error: err });
+  const query = 'INSERT INTO users (username, password) VALUES (?, ?)';
+  db.query(query, [username, hashedPassword], (error, results) => {
+    if (error) {
+      return res.status(500).json({ error });
     }
-
-    const query = 'INSERT INTO users (username, password) VALUES (?, ?)';
-    db.query(query, [username, hash], (error, results) => {
-      if (error) {
-        console.error('Database query error:', error);
-        res.status(500).json({ error });
-      } else {
-        res.status(200).json({ message: 'User registered successfully', results });
-      }
-    });
+    res.status(200).json({ message: 'Registration successful' });
   });
 });
 
 app.post('/login', (req, res) => {
   const { username, password } = req.body;
 
-  const query = 'SELECT * FROM users WHERE username = ?';
+  const query = 'SELECT password FROM users WHERE username = ?';
   db.query(query, [username], (error, results) => {
     if (error) {
-      console.error('Database query error:', error);
-      res.status(500).json({ error });
-    } else if (results.length > 0) {
-      const user = results[0];
-      bcrypt.compare(password, user.password, (err, result) => {
-        if (result) {
-          res.status(200).json({ message: 'Login successful' });
-        } else {
-          res.status(401).json({ message: 'Invalid username or password' });
-        }
-      });
-    } else {
-      res.status(401).json({ message: 'Invalid username or password' });
+      return res.status(500).json({ error });
     }
+    if (results.length === 0) {
+      return res.status(404).json({ message: 'User does not exist' });
+    }
+    const hashedPassword = results[0].password;
+    const passwordMatch = bcrypt.compareSync(password, hashedPassword);
+    if (!passwordMatch) {
+      return res.status(401).json({ message: 'Password incorrect' });
+    }
+    res.status(200).json({ message: 'Login successful' });
   });
 });
 
@@ -140,6 +110,25 @@ function insertValue(name, value, res) {
       res.status(200).json({ message: 'Data uploaded successfully', results });
     }
   });
+}
+
+const knownCategories = [
+  'Oil/Barrel', 'Gas/CubicMeter', 'Water/Liter' // Add more categories as needed
+];
+
+function getClosestCategory(input) {
+  let closestCategory = null;
+  let minDistance = Infinity;
+
+  knownCategories.forEach(category => {
+    const distance = levenshtein.get(input, category);
+    if (distance < minDistance) {
+      minDistance = distance;
+      closestCategory = category;
+    }
+  });
+
+  return (minDistance <= 2) ? closestCategory : input;
 }
 
 const PORT = process.env.PORT || 3001;
