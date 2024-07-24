@@ -2,9 +2,12 @@ const express = require('express');
 const mysql = require('mysql');
 const bodyParser = require('body-parser');
 const levenshtein = require('fast-levenshtein');
+const bcrypt = require('bcrypt');
+const cors = require('cors');
 
 const app = express();
 app.use(bodyParser.json());
+app.use(cors());
 
 const db = mysql.createConnection({
   host: 'rm-2ze8y04111hiut0r60o.mysql.rds.aliyuncs.com',
@@ -45,6 +48,56 @@ app.get('/', (req, res) => {
   res.send('Server is running');
 });
 
+// User registration
+app.post('/register', async (req, res) => {
+  const { username, password } = req.body;
+
+  if (!username || !password) {
+    return res.status(400).json({ message: 'Username and password are required' });
+  }
+
+  const hashedPassword = await bcrypt.hash(password, 10);
+
+  const query = 'INSERT INTO users (username, password) VALUES (?, ?)';
+  db.query(query, [username, hashedPassword], (err, results) => {
+    if (err) {
+      res.status(500).json({ error: err });
+    } else {
+      res.status(200).json({ message: 'User registered successfully' });
+    }
+  });
+});
+
+// User login
+app.post('/login', (req, res) => {
+  const { username, password } = req.body;
+
+  if (!username || !password) {
+    return res.status(400).json({ message: 'Username and password are required' });
+  }
+
+  const query = 'SELECT * FROM users WHERE username = ?';
+  db.query(query, [username], async (err, results) => {
+    if (err) {
+      return res.status(500).json({ error: err });
+    }
+
+    if (results.length === 0) {
+      return res.status(400).json({ message: 'Invalid username or password' });
+    }
+
+    const user = results[0];
+    const isPasswordMatch = await bcrypt.compare(password, user.password);
+
+    if (isPasswordMatch) {
+      res.status(200).json({ message: 'Login successful' });
+    } else {
+      res.status(400).json({ message: 'Invalid username or password' });
+    }
+  });
+});
+
+// Upload data
 app.post('/upload', (req, res) => {
   console.log('Received request:', req.body);
   let { name, value } = req.body;
