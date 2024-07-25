@@ -133,6 +133,7 @@ function insertValue(name, value, res) {
   });
 }
 
+// Register route for main page (login_info table)
 app.post('/register', (req, res) => {
   const { username, password, dob, country } = req.body;
 
@@ -164,6 +165,39 @@ app.post('/register', (req, res) => {
   });
 });
 
+// Register route for database access (users table)
+app.post('/register-db', (req, res) => {
+  const { username, password } = req.body;
+
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Please provide both username and password' });
+  }
+
+  const checkUserQuery = 'SELECT * FROM users WHERE username = ?';
+  db.query(checkUserQuery, [username], (error, results) => {
+    if (error) {
+      console.error('Database query error:', error);
+      return res.status(500).json({ error });
+    }
+
+    if (results.length > 0) {
+      return res.status(400).json({ error: 'User already exists' });
+    }
+
+    const hashedPassword = bcrypt.hashSync(password, 10);
+    const insertUserQuery = 'INSERT INTO users (username, password) VALUES (?, ?)';
+    db.query(insertUserQuery, [username, hashedPassword], (error, results) => {
+      if (error) {
+        console.error('Database query error:', error);
+        return res.status(500).json({ error: 'Database error' });
+      }
+
+      res.status(200).json({ message: 'Registration successful' });
+    });
+  });
+});
+
+// Login route for main page (login_info table)
 app.post('/login', (req, res) => {
   const { username, password } = req.body;
 
@@ -172,6 +206,34 @@ app.post('/login', (req, res) => {
   }
 
   const checkUserQuery = 'SELECT * FROM login_info WHERE username = ?';
+  db.query(checkUserQuery, [username], (error, results) => {
+    if (error) {
+      console.error('Database query error:', error);
+      return res.status(500).json({ error: 'Database error' });
+    }
+
+    if (results.length === 0) {
+      return res.status(404).json({ error: 'User does not exist' });
+    }
+
+    const user = results[0];
+    if (!bcrypt.compareSync(password, user.password)) {
+      return res.status(401).json({ error: 'Password incorrect' });
+    }
+
+    res.status(200).json({ message: 'Login successful' });
+  });
+});
+
+// Login route for database access (users table)
+app.post('/login-db', (req, res) => {
+  const { username, password } = req.body;
+
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Please provide both username and password' });
+  }
+
+  const checkUserQuery = 'SELECT * FROM users WHERE username = ?';
   db.query(checkUserQuery, [username], (error, results) => {
     if (error) {
       console.error('Database query error:', error);
