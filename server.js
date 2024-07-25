@@ -34,11 +34,27 @@ db.connect((err) => {
     );
   `;
 
+  const createUsersTableQuery = `
+    CREATE TABLE IF NOT EXISTS users (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      username VARCHAR(255) NOT NULL,
+      password VARCHAR(255) NOT NULL
+    );
+  `;
+
   db.query(createLoginInfoTableQuery, (error) => {
     if (error) {
       console.error('Error creating login_info table:', error);
     } else {
       console.log('login_info table created or already exists.');
+    }
+  });
+
+  db.query(createUsersTableQuery, (error) => {
+    if (error) {
+      console.error('Error creating users table:', error);
+    } else {
+      console.log('users table created or already exists.');
     }
   });
 });
