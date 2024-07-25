@@ -140,7 +140,7 @@ app.post('/register', (req, res) => {
     db.query(insertUserQuery, [username, hashedPassword, dob, country], (error, results) => {
       if (error) {
         console.error('Database query error:', error);
-        return res.status(500).json({ error });
+        return res.status(500).json({ error: 'Database error' });
       }
 
       res.status(200).json({ message: 'Registration successful' });
@@ -159,7 +159,7 @@ app.post('/login', (req, res) => {
   db.query(checkUserQuery, [username], (error, results) => {
     if (error) {
       console.error('Database query error:', error);
-      return res.status(500).json({ error });
+      return res.status(500).json({ error: 'Database error' });
     }
 
     if (results.length === 0) {
