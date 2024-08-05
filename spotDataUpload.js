@@ -36,36 +36,55 @@ module.exports = function(db) {
       await queryPromise(db, 'START TRANSACTION');
 
       // Insert or get Department
-      const departmentResult = await queryPromise(db,
-        'INSERT INTO departments (DepartmentName, Faculty) VALUES (?, ?) ON DUPLICATE KEY UPDATE DepartmentID=LAST_INSERT_ID(DepartmentID)',
+      const [departmentRow] = await queryPromise(db,
+        'SELECT DepartmentID FROM departments WHERE DepartmentName = ? AND Faculty = ?',
         [department, faculty]
       );
-      const departmentId = departmentResult.insertId;
-      console.log('Department inserted/updated with ID:', departmentId); // Log department ID
-
-      // Insert or get Course
-      const courseResult = await queryPromise(db,
-        'INSERT INTO courses (CourseCode, CourseName, DepartmentID) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE CourseID=LAST_INSERT_ID(CourseID)',
-        [courseCode, courseCode, departmentId]
-      );
-      const courseId = courseResult.insertId;
-      console.log('Course inserted/updated with ID:', courseId); // Log course ID
+      let departmentId;
+      if (departmentRow) {
+        departmentId = departmentRow.DepartmentID;
+      } else {
+        const result = await queryPromise(db,
+          'INSERT INTO departments (DepartmentName, Faculty) VALUES (?, ?)',
+          [department, faculty]
+        );
+        departmentId = result.insertId;
+      }
+      console.log('Department ID:', departmentId); // Log department ID
 
       // Insert or get Instructor
-      const instructorResult = await queryPromise(db,
-        'INSERT INTO instructors (FirstName, LastName, DepartmentID) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE InstructorID=LAST_INSERT_ID(InstructorID)',
+      const [instructorRow] = await queryPromise(db,
+        'SELECT InstructorID FROM instructors WHERE FirstName = ? AND LastName = ? AND DepartmentID = ?',
         [instructorFirstName, instructorLastName, departmentId]
       );
-      const instructorId = instructorResult.insertId;
-      console.log('Instructor inserted/updated with ID:', instructorId); // Log instructor ID
+      let instructorId;
+      if (instructorRow) {
+        instructorId = instructorRow.InstructorID;
+      } else {
+        const result = await queryPromise(db,
+          'INSERT INTO instructors (FirstName, LastName, DepartmentID) VALUES (?, ?, ?)',
+          [instructorFirstName, instructorLastName, departmentId]
+        );
+        instructorId = result.insertId;
+      }
+      console.log('Instructor ID:', instructorId); // Log instructor ID
 
       // Insert or get CourseOffering
-      const offeringResult = await queryPromise(db,
-        'INSERT INTO courseofferings (CourseID, InstructorID, AcademicYear, Semester, Section) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE OfferingID=LAST_INSERT_ID(OfferingID)',
+      const [offeringRow] = await queryPromise(db,
+        'SELECT OfferingID FROM courseofferings WHERE CourseID = ? AND InstructorID = ? AND AcademicYear = ? AND Semester = ? AND Section = ?',
         [courseId, instructorId, academicYear, courseType, section]
       );
-      const offeringId = offeringResult.insertId;
-      console.log('Course offering inserted/updated with ID:', offeringId); // Log offering ID
+      let offeringId;
+      if (offeringRow) {
+        offeringId = offeringRow.OfferingID;
+      } else {
+        const result = await queryPromise(db,
+          'INSERT INTO courseofferings (CourseID, InstructorID, AcademicYear, Semester, Section) VALUES (?, ?, ?, ?, ?)',
+          [courseId, instructorId, academicYear, courseType, section]
+        );
+        offeringId = result.insertId;
+      }
+      console.log('Course offering ID:', offeringId); // Log offering ID
 
       // Insert SPOT_Ratings
       const ratingResult = await queryPromise(db,
