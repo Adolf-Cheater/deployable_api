@@ -52,6 +52,23 @@ module.exports = function(db) {
       }
       console.log('Department ID:', departmentId); // Log department ID
 
+      // Insert or get Course
+      const [courseRow] = await queryPromise(db,
+        'SELECT CourseID FROM courses WHERE CourseCode = ? AND DepartmentID = ?',
+        [courseCode, departmentId]
+      );
+      let courseId;
+      if (courseRow) {
+        courseId = courseRow.CourseID;
+      } else {
+        const result = await queryPromise(db,
+          'INSERT INTO courses (CourseCode, CourseName, DepartmentID) VALUES (?, ?, ?)',
+          [courseCode, courseCode, departmentId]
+        );
+        courseId = result.insertId;
+      }
+      console.log('Course ID:', courseId); // Log course ID
+
       // Insert or get Instructor
       const [instructorRow] = await queryPromise(db,
         'SELECT InstructorID FROM instructors WHERE FirstName = ? AND LastName = ? AND DepartmentID = ?',
