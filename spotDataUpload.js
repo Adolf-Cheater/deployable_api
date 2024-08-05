@@ -76,7 +76,7 @@ module.exports = function(db) {
       console.log('SPOT rating inserted with ID:', ratingId); // Log rating ID
 
       // Insert SPOT_Questions
-      if (Array.isArray(questions)) {
+      if (Array.isArray(questions) && questions.length > 0) {
         for (let question of questions) {
           await queryPromise(db,
             'INSERT INTO spot_questions (RatingID, QuestionText, StronglyDisagree, Disagree, Neither, Agree, StronglyAgree, Median) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
