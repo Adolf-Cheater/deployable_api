@@ -59,13 +59,13 @@ module.exports = function(db) {
       const instructorId = instructorResult.insertId;
       console.log('Instructor inserted/updated with ID:', instructorId); // Log instructor ID
 
-      // Insert CourseOffering
+      // Insert or get CourseOffering
       const [offeringResult] = await queryPromise(db,
-        'INSERT INTO courseofferings (CourseID, InstructorID, AcademicYear, Semester, Section) VALUES (?, ?, ?, ?, ?)',
+        'INSERT INTO courseofferings (CourseID, InstructorID, AcademicYear, Semester, Section) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE OfferingID=LAST_INSERT_ID(OfferingID)',
         [courseId, instructorId, academicYear, courseType, section]
       );
       const offeringId = offeringResult.insertId;
-      console.log('Course offering inserted with ID:', offeringId); // Log offering ID
+      console.log('Course offering inserted/updated with ID:', offeringId); // Log offering ID
 
       // Insert SPOT_Ratings
       const [ratingResult] = await queryPromise(db,
@@ -77,7 +77,7 @@ module.exports = function(db) {
 
       // Insert SPOT_Questions
       for (let question of questions) {
-        const questionResult = await queryPromise(db,
+        await queryPromise(db,
           'INSERT INTO spot_questions (RatingID, QuestionText, StronglyDisagree, Disagree, Neither, Agree, StronglyAgree, Median) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
           [ratingId, question.text, question.stronglyDisagree, question.disagree, question.neither, question.agree, question.stronglyAgree, question.median]
         );
