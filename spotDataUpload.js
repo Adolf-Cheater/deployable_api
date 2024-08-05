@@ -22,7 +22,7 @@ module.exports = function(db) {
     const { 
       academicYear, courseCode, courseType, section, 
       instructorFirstName, instructorLastName, department, faculty, 
-      classSize, responseCount, processDate, questions 
+      classSize, responseCount, processDate, questions = [] // Default to an empty array if questions is undefined
     } = req.body;
 
     // Basic validation
@@ -36,7 +36,7 @@ module.exports = function(db) {
       await queryPromise(db, 'START TRANSACTION');
 
       // Insert or get Department
-      const [departmentResult] = await queryPromise(db,
+      const departmentResult = await queryPromise(db,
         'INSERT INTO departments (DepartmentName, Faculty) VALUES (?, ?) ON DUPLICATE KEY UPDATE DepartmentID=LAST_INSERT_ID(DepartmentID)',
         [department, faculty]
       );
@@ -44,7 +44,7 @@ module.exports = function(db) {
       console.log('Department inserted/updated with ID:', departmentId); // Log department ID
 
       // Insert or get Course
-      const [courseResult] = await queryPromise(db,
+      const courseResult = await queryPromise(db,
         'INSERT INTO courses (CourseCode, CourseName, DepartmentID) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE CourseID=LAST_INSERT_ID(CourseID)',
         [courseCode, courseCode, departmentId]
       );
@@ -52,7 +52,7 @@ module.exports = function(db) {
       console.log('Course inserted/updated with ID:', courseId); // Log course ID
 
       // Insert or get Instructor
-      const [instructorResult] = await queryPromise(db,
+      const instructorResult = await queryPromise(db,
         'INSERT INTO instructors (FirstName, LastName, DepartmentID) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE InstructorID=LAST_INSERT_ID(InstructorID)',
         [instructorFirstName, instructorLastName, departmentId]
       );
@@ -60,7 +60,7 @@ module.exports = function(db) {
       console.log('Instructor inserted/updated with ID:', instructorId); // Log instructor ID
 
       // Insert or get CourseOffering
-      const [offeringResult] = await queryPromise(db,
+      const offeringResult = await queryPromise(db,
         'INSERT INTO courseofferings (CourseID, InstructorID, AcademicYear, Semester, Section) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE OfferingID=LAST_INSERT_ID(OfferingID)',
         [courseId, instructorId, academicYear, courseType, section]
       );
@@ -68,7 +68,7 @@ module.exports = function(db) {
       console.log('Course offering inserted/updated with ID:', offeringId); // Log offering ID
 
       // Insert SPOT_Ratings
-      const [ratingResult] = await queryPromise(db,
+      const ratingResult = await queryPromise(db,
         'INSERT INTO spot_ratings (OfferingID, EnrollmentCount, ResponseCount, LastUpdated) VALUES (?, ?, ?, ?)',
         [offeringId, classSize, responseCount, processDate]
       );
@@ -76,12 +76,16 @@ module.exports = function(db) {
       console.log('SPOT rating inserted with ID:', ratingId); // Log rating ID
 
       // Insert SPOT_Questions
-      for (let question of questions) {
-        await queryPromise(db,
-          'INSERT INTO spot_questions (RatingID, QuestionText, StronglyDisagree, Disagree, Neither, Agree, StronglyAgree, Median) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-          [ratingId, question.text, question.stronglyDisagree, question.disagree, question.neither, question.agree, question.stronglyAgree, question.median]
-        );
-        console.log('SPOT question inserted:', question.text); // Log each question inserted
+      if (Array.isArray(questions)) {
+        for (let question of questions) {
+          await queryPromise(db,
+            'INSERT INTO spot_questions (RatingID, QuestionText, StronglyDisagree, Disagree, Neither, Agree, StronglyAgree, Median) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            [ratingId, question.text, parseInt(question.stronglyDisagree), parseInt(question.disagree), parseInt(question.neither), parseInt(question.agree), parseInt(question.stronglyAgree), parseFloat(question.median)]
+          );
+          console.log('SPOT question inserted:', question.text); // Log each question inserted
+        }
+      } else {
+        console.warn('Questions is not an array or is missing. Questions:', questions);
       }
 
       // Commit the transaction
