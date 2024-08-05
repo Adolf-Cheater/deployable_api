@@ -4,14 +4,14 @@ const bodyParser = require('body-parser');
 const bcrypt = require('bcryptjs');
 const cors = require('cors');
 const levenshtein = require('fast-levenshtein');
-const spotDataUpload = require('./spotDataUpload'); // Assuming spotDataUpload.js is in the same directory
+const spotDataUpload = require('./spotDataUpload');
 
 const app = express();
 app.use(bodyParser.json());
 app.use(cors());
 
-// MySQL database connection
-const db = mysql.createConnection({
+// MySQL connection for 'mytables'
+const dbMytables = mysql.createConnection({
   host: 'rm-2ze8y04111hiut0r60o.mysql.rds.aliyuncs.com',
   user: 'main',
   password: 'Woshishabi2004',
@@ -19,77 +19,44 @@ const db = mysql.createConnection({
   connectTimeout: 10000
 });
 
-db.connect((err) => {
-  if (err) {
-    console.error('Database connection failed:', err.stack);
-    return;
-  }
-  console.log('Connected to database.');
-
-  // Ensure necessary tables exist
-  const createLoginInfoTableQuery = `
-    CREATE TABLE IF NOT EXISTS login_info (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      username VARCHAR(255) NOT NULL,
-      password VARCHAR(255) NOT NULL,
-      dob DATE NOT NULL,
-      country VARCHAR(255) NOT NULL
-    );
-  `;
-
-  const createUsersTableQuery = `
-    CREATE TABLE IF NOT EXISTS users (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      username VARCHAR(255) NOT NULL,
-      password VARCHAR(255) NOT NULL
-    );
-  `;
-
-  db.query(createLoginInfoTableQuery, (error) => {
-    if (error) {
-      console.error('Error creating login_info table:', error);
-    } else {
-      console.log('login_info table created or already exists.');
-    }
-  });
-
-  db.query(createUsersTableQuery, (error) => {
-    if (error) {
-      console.error('Error creating users table:', error);
-    } else {
-      console.log('users table created or already exists.');
-    }
-  });
+// MySQL connection for 'ratemycourse'
+const dbRateMyCourse = mysql.createConnection({
+  host: 'rm-2ze8y04111hiut0r60o.mysql.rds.aliyuncs.com', // same host
+  user: 'main', // same user
+  password: 'Woshishabi2004', // same password
+  database: 'ratemycourse',
+  connectTimeout: 10000
 });
 
-const knownCategories = [
-  'Oil/Barrel', 'Gas/CubicMeter', 'Water/Liter' // Add more categories as needed
-];
+dbMytables.connect((err) => {
+  if (err) {
+    console.error('Database connection to mytables failed:', err.stack);
+    return;
+  }
+  console.log('Connected to mytables database.');
 
-function getClosestCategory(input) {
-  let closestCategory = null;
-  let minDistance = Infinity;
+  // Additional setup for mytables, if needed
+});
 
-  knownCategories.forEach(category => {
-    const distance = levenshtein.get(input, category);
-    if (distance < minDistance) {
-      minDistance = distance;
-      closestCategory = category;
-    }
-  });
+dbRateMyCourse.connect((err) => {
+  if (err) {
+    console.error('Database connection to ratemycourse failed:', err.stack);
+    return;
+  }
+  console.log('Connected to ratemycourse database.');
 
-  return (minDistance <= 2) ? closestCategory : input;
-}
+  // Additional setup for ratemycourse, if needed
+});
 
-// Root route for server status
+// Middleware for the root route
 app.get('/', (req, res) => {
   res.send('Server is running');
 });
 
-// Existing spotDataUpload route
-app.use('/api', spotDataUpload(db));
+// Route handling for 'ratemycourse' related data
+app.use('/api', spotDataUpload(dbRateMyCourse));
 
-// Register route for main page (login_info table)
+// Register route for main page (login_info table in 'mytables')
 app.post('/register', (req, res) => {
   const { username, password, dob, country } = req.body;
 
@@ -98,7 +65,7 @@ app.post('/register', (req, res) => {
   }
 
   const checkUserQuery = 'SELECT * FROM login_info WHERE username = ?';
-  db.query(checkUserQuery, [username], (error, results) => {
+  dbMytables.query(checkUserQuery, [username], (error, results) => {
     if (error) {
       console.error('Database query error:', error);
       return res.status(500).json({ error });
@@ -110,7 +77,7 @@ app.post('/register', (req, res) => {
 
     const hashedPassword = bcrypt.hashSync(password, 10);
     const insertUserQuery = 'INSERT INTO login_info (username, password, dob, country) VALUES (?, ?, ?, ?)';
-    db.query(insertUserQuery, [username, hashedPassword, dob, country], (error, results) => {
+    dbMytables.query(insertUserQuery, [username, hashedPassword, dob, country], (error, results) => {
       if (error) {
         console.error('Database query error:', error);
         return res.status(500).json({ error: 'Database error' });
@@ -121,7 +88,7 @@ app.post('/register', (req, res) => {
   });
 });
 
-// Register route for database access (users table)
+// Register route for database access (users table in 'mytables')
 app.post('/register-db', (req, res) => {
   const { username, password } = req.body;
 
@@ -130,7 +97,7 @@ app.post('/register-db', (req, res) => {
   }
 
   const checkUserQuery = 'SELECT * FROM users WHERE username = ?';
-  db.query(checkUserQuery, [username], (error, results) => {
+  dbMytables.query(checkUserQuery, [username], (error, results) => {
     if (error) {
       console.error('Database query error:', error);
       return res.status(500).json({ error });
@@ -142,7 +109,7 @@ app.post('/register-db', (req, res) => {
 
     const hashedPassword = bcrypt.hashSync(password, 10);
     const insertUserQuery = 'INSERT INTO users (username, password) VALUES (?, ?)';
-    db.query(insertUserQuery, [username, hashedPassword], (error, results) => {
+    dbMytables.query(insertUserQuery, [username, hashedPassword], (error, results) => {
       if (error) {
         console.error('Database query error:', error);
         return res.status(500).json({ error: 'Database error' });
@@ -153,7 +120,7 @@ app.post('/register-db', (req, res) => {
   });
 });
 
-// Login route for main page (login_info table)
+// Login route for main page (login_info table in 'mytables')
 app.post('/login', (req, res) => {
   const { username, password } = req.body;
 
@@ -162,7 +129,7 @@ app.post('/login', (req, res) => {
   }
 
   const checkUserQuery = 'SELECT * FROM login_info WHERE username = ?';
-  db.query(checkUserQuery, [username], (error, results) => {
+  dbMytables.query(checkUserQuery, [username], (error, results) => {
     if (error) {
       console.error('Database query error:', error);
       return res.status(500).json({ error: 'Database error' });
@@ -181,7 +148,7 @@ app.post('/login', (req, res) => {
   });
 });
 
-// Login route for database access (users table)
+// Login route for database access (users table in 'mytables')
 app.post('/login-db', (req, res) => {
   const { username, password } = req.body;
 
@@ -190,7 +157,7 @@ app.post('/login-db', (req, res) => {
   }
 
   const checkUserQuery = 'SELECT * FROM users WHERE username = ?';
-  db.query(checkUserQuery, [username], (error, results) => {
+  dbMytables.query(checkUserQuery, [username], (error, results) => {
     if (error) {
       console.error('Database query error:', error);
       return res.status(500).json({ error: 'Database error' });
