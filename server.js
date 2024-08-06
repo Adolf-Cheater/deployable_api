@@ -73,14 +73,12 @@ app.get('/api/search', async (req, res) => {
   const searchPattern = `%${query}%`;
 
   try {
+    // Updated query to include courseofferdb for fetching course titles
     const searchQuery = `
       SELECT 
         co.offeringid,
         c.coursecode,
-        CASE 
-          WHEN offer.courseTitle IS NOT NULL THEN offer.courseTitle 
-          ELSE c.coursename 
-        END AS coursename, 
+        COALESCE(offer.courseTitle, c.coursename) AS coursename,
         i.firstname,
         i.lastname,
         d.DepartmentName AS department,
@@ -97,7 +95,10 @@ app.get('/api/search', async (req, res) => {
         sq.Neither,
         sq.Agree,
         sq.StronglyAgree,
-        sq.Median
+        sq.Median,
+        offer.courseTitle,
+        offer.courseLetter,
+        offer.courseNumber
       FROM courseofferings co
       JOIN courses c ON co.courseid = c.courseid
       JOIN instructors i ON co.instructorid = i.instructorid
@@ -123,13 +124,17 @@ app.get('/api/search', async (req, res) => {
       searchPattern
     ]);
 
+    // Log retrieved data for debugging
+    console.log('Query Results:', results);
+
+    // Format results to include the course title from courseofferdb
     const formattedResults = results.reduce((acc, row) => {
       let result = acc.find(item => item.offeringid === row.offeringid);
       if (!result) {
         result = {
           offeringid: row.offeringid,
           coursecode: row.coursecode,
-          coursename: row.coursename,
+          coursename: row.coursename, // Log whether it used courseTitle or coursename
           firstname: row.firstname,
           lastname: row.lastname,
           department: row.department,
@@ -156,6 +161,14 @@ app.get('/api/search', async (req, res) => {
           median: row.Median,
         });
       }
+
+      // Debugging: log the courseTitle retrieved
+      if (row.courseTitle) {
+        console.log(`Matched courseTitle: ${row.courseTitle} for coursecode: ${row.coursecode}`);
+      } else {
+        console.log(`Using coursename: ${row.coursename} for coursecode: ${row.coursecode}`);
+      }
+
       return acc;
     }, []);
 
