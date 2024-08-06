@@ -75,37 +75,37 @@ app.get('/api/search', async (req, res) => {
   try {
     // Updated query to include courseofferdb for fetching course titles
     const searchQuery = `
-      SELECT 
-        co.offeringid,
-        c.coursecode,
-        COALESCE(offer.courseTitle, c.coursename) AS coursename,
-        i.firstname,
-        i.lastname,
-        d.DepartmentName AS department,
-        d.Faculty AS faculty,
-        co.academicyear,
-        co.semester,
-        co.section,
-        sr.enrollmentcount,
-        sr.responsecount,
-        sr.lastupdated,
-        sq.QuestionText AS question,
-        sq.StronglyDisagree,
-        sq.Disagree,
-        sq.Neither,
-        sq.Agree,
-        sq.StronglyAgree,
-        sq.Median,
-        offer.courseTitle,
-        offer.courseLetter,
-        offer.courseNumber
+    SELECT 
+      co.offeringid,
+      c.coursecode,
+      COALESCE(offer.courseTitle, c.coursename) AS coursename,
+      i.firstname,
+      i.lastname,
+      d.DepartmentName AS department,
+      d.Faculty AS faculty,
+      co.academicyear,
+      co.semester,
+      co.section,
+      sr.enrollmentcount,
+      sr.responsecount,
+      sr.lastupdated,
+      sq.QuestionText AS question,
+      sq.StronglyDisagree,
+      sq.Disagree,
+      sq.Neither,
+      sq.Agree,
+      sq.StronglyAgree,
+      sq.Median,
+      offer.courseTitle,
+      offer.courseLetter,
+      offer.courseNumber
       FROM courseofferings co
       JOIN courses c ON co.courseid = c.courseid
       JOIN instructors i ON co.instructorid = i.instructorid
       JOIN departments d ON c.departmentid = d.DepartmentID
       LEFT JOIN spot_ratings sr ON co.offeringid = sr.offeringid
       LEFT JOIN spot_questions sq ON sr.ratingid = sq.ratingid
-      LEFT JOIN courseofferdb offer ON CONCAT(offer.courseLetter, offer.courseNumber) = c.coursecode
+      LEFT JOIN courseofferdb offer ON CONCAT(offer.courseLetter, ' ', offer.courseNumber) = c.coursecode
       WHERE c.coursecode LIKE ? 
       OR c.coursename LIKE ? 
       OR i.firstname LIKE ? 
@@ -126,6 +126,15 @@ app.get('/api/search', async (req, res) => {
 
     // Log retrieved data for debugging
     console.log('Query Results:', results);
+
+    // Check for each course whether courseTitle was matched
+    results.forEach(row => {
+      if (row.courseTitle) {
+        console.log(`Matched courseTitle: ${row.courseTitle} for coursecode: ${row.coursecode}`);
+      } else {
+        console.log(`No courseTitle found, using coursename: ${row.coursename} for coursecode: ${row.coursecode}`);
+      }
+    });
 
     // Format results to include the course title from courseofferdb
     const formattedResults = results.reduce((acc, row) => {
