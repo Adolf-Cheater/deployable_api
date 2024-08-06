@@ -94,10 +94,7 @@ app.get('/api/search', async (req, res) => {
         sq.Neither,
         sq.Agree,
         sq.StronglyAgree,
-        sq.Median,
-        offer.courseTitle,
-        offer.courseLetter,
-        offer.courseNumber
+        sq.Median
       FROM courseofferings co
       JOIN courses c ON co.courseid = c.courseid
       JOIN instructors i ON co.instructorid = i.instructorid
@@ -112,9 +109,6 @@ app.get('/api/search', async (req, res) => {
       OR CONCAT(i.firstname, ' ', i.lastname) LIKE ?
     `;
 
-    console.log('SQL Query:', searchQuery);
-    console.log('SQL Values:', [searchPattern, searchPattern, searchPattern, searchPattern, searchPattern]);
-
     const results = await queryPromise(dbRateMyCourse, searchQuery, [
       searchPattern, 
       searchPattern, 
@@ -122,9 +116,6 @@ app.get('/api/search', async (req, res) => {
       searchPattern,
       searchPattern
     ]);
-
-    // Log retrieved data for debugging
-    console.log('Query Results:', results);
 
     // Grouping results by offeringid
     const groupedResults = results.reduce((acc, row) => {
