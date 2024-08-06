@@ -73,32 +73,31 @@ app.get('/api/search', async (req, res) => {
   const searchPattern = `%${query}%`;
 
   try {
-    // Updated query to include courseofferdb for fetching course titles
     const searchQuery = `
-    SELECT 
-      co.offeringid,
-      c.coursecode,
-      COALESCE(offer.courseTitle, c.coursename) AS coursename,
-      i.firstname,
-      i.lastname,
-      d.DepartmentName AS department,
-      d.Faculty AS faculty,
-      co.academicyear,
-      co.semester,
-      co.section,
-      sr.enrollmentcount,
-      sr.responsecount,
-      sr.lastupdated,
-      sq.QuestionText AS question,
-      sq.StronglyDisagree,
-      sq.Disagree,
-      sq.Neither,
-      sq.Agree,
-      sq.StronglyAgree,
-      sq.Median,
-      offer.courseTitle,
-      offer.courseLetter,
-      offer.courseNumber
+      SELECT 
+        co.offeringid,
+        c.coursecode,
+        COALESCE(offer.courseTitle, c.coursename) AS coursename,
+        i.firstname,
+        i.lastname,
+        d.DepartmentName AS department,
+        d.Faculty AS faculty,
+        co.academicyear,
+        co.semester,
+        co.section,
+        sr.enrollmentcount,
+        sr.responsecount,
+        sr.lastupdated,
+        sq.QuestionText AS question,
+        sq.StronglyDisagree,
+        sq.Disagree,
+        sq.Neither,
+        sq.Agree,
+        sq.StronglyAgree,
+        sq.Median,
+        offer.courseTitle,
+        offer.courseLetter,
+        offer.courseNumber
       FROM courseofferings co
       JOIN courses c ON co.courseid = c.courseid
       JOIN instructors i ON co.instructorid = i.instructorid
@@ -128,6 +127,7 @@ app.get('/api/search', async (req, res) => {
     console.log('Query Results:', results);
 
     // Check for each course whether courseTitle was matched
+    /*
     results.forEach(row => {
       if (row.courseTitle) {
         console.log(`Matched courseTitle: ${row.courseTitle} for coursecode: ${row.coursecode}`);
@@ -135,53 +135,9 @@ app.get('/api/search', async (req, res) => {
         console.log(`No courseTitle found, using coursename: ${row.coursename} for coursecode: ${row.coursecode}`);
       }
     });
+    */
 
-    // Format results to include the course title from courseofferdb
-    const formattedResults = results.reduce((acc, row) => {
-      let result = acc.find(item => item.offeringid === row.offeringid);
-      if (!result) {
-        result = {
-          offeringid: row.offeringid,
-          coursecode: row.coursecode,
-          coursename: row.coursename, // Log whether it used courseTitle or coursename
-          firstname: row.firstname,
-          lastname: row.lastname,
-          department: row.department,
-          faculty: row.faculty,
-          academicyear: row.academicyear,
-          semester: row.semester,
-          section: row.section,
-          enrollmentcount: row.enrollmentcount,
-          responsecount: row.responsecount,
-          lastupdated: row.lastupdated,
-          ratings: [],
-        };
-        acc.push(result);
-      }
-
-      if (row.question) {
-        result.ratings.push({
-          question: row.question,
-          stronglydisagree: row.StronglyDisagree,
-          disagree: row.Disagree,
-          neither: row.Neither,
-          agree: row.Agree,
-          stronglyagree: row.StronglyAgree,
-          median: row.Median,
-        });
-      }
-
-      // Debugging: log the courseTitle retrieved
-      if (row.courseTitle) {
-        console.log(`Matched courseTitle: ${row.courseTitle} for coursecode: ${row.coursecode}`);
-      } else {
-        console.log(`Using coursename: ${row.coursename} for coursecode: ${row.coursecode}`);
-      }
-
-      return acc;
-    }, []);
-
-    res.json(formattedResults);
+    res.json(results);
   } catch (error) {
     console.error('Database query error:', error);
     res.status(500).json({ error: 'Database error: ' + error.message });
