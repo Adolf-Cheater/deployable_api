@@ -73,7 +73,7 @@ app.get('/api/search', async (req, res) => {
   const searchPattern = `%${query}%`;
 
   try {
-    // Query to search across courses and instructors, including full name matching
+    // Updated query to include courseofferdb for fetching course titles
     const searchQuery = `
       SELECT 
         co.offeringid,
@@ -95,13 +95,15 @@ app.get('/api/search', async (req, res) => {
         sq.Neither,
         sq.Agree,
         sq.StronglyAgree,
-        sq.Median
+        sq.Median,
+        offer.courseTitle
       FROM courseofferings co
       JOIN courses c ON co.courseid = c.courseid
       JOIN instructors i ON co.instructorid = i.instructorid
       JOIN departments d ON c.departmentid = d.DepartmentID
       LEFT JOIN spot_ratings sr ON co.offeringid = sr.offeringid
       LEFT JOIN spot_questions sq ON sr.ratingid = sq.ratingid
+      LEFT JOIN courseofferdb offer ON c.courseLetter = offer.courseLetter AND c.courseNumber = offer.courseNumber
       WHERE c.coursecode LIKE ? 
       OR c.coursename LIKE ? 
       OR i.firstname LIKE ? 
@@ -117,18 +119,18 @@ app.get('/api/search', async (req, res) => {
       searchPattern
     ]);
 
-    // Format results to match the expected structure
+    // Format results to include the course title from courseofferdb
     const formattedResults = results.reduce((acc, row) => {
       let result = acc.find(item => item.offeringid === row.offeringid);
       if (!result) {
         result = {
           offeringid: row.offeringid,
           coursecode: row.coursecode,
-          coursename: row.coursename,
+          coursename: row.courseTitle || row.coursename, // Use courseTitle from courseofferdb if available
           firstname: row.firstname,
           lastname: row.lastname,
           department: row.department,
-          faculty: row.faculty,  // Include faculty field
+          faculty: row.faculty,
           academicyear: row.academicyear,
           semester: row.semester,
           section: row.section,
@@ -148,7 +150,7 @@ app.get('/api/search', async (req, res) => {
           neither: row.Neither,
           agree: row.Agree,
           stronglyagree: row.StronglyAgree,
-          median: row.Median,  // Display the median (mean)
+          median: row.Median,
         });
       }
       return acc;
