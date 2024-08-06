@@ -73,7 +73,7 @@ app.get('/api/search', async (req, res) => {
   const searchPattern = `%${query}%`;
 
   try {
-    // Query to search across courses and instructors
+    // Query to search across courses and instructors, including full name matching
     const searchQuery = `
       SELECT 
         co.offeringid,
@@ -82,7 +82,7 @@ app.get('/api/search', async (req, res) => {
         i.firstname,
         i.lastname,
         d.DepartmentName AS department,
-        d.Faculty AS faculty,  
+        d.Faculty AS faculty,
         co.academicyear,
         co.semester,
         co.section,
@@ -102,10 +102,20 @@ app.get('/api/search', async (req, res) => {
       JOIN departments d ON c.departmentid = d.DepartmentID
       LEFT JOIN spot_ratings sr ON co.offeringid = sr.offeringid
       LEFT JOIN spot_questions sq ON sr.ratingid = sq.ratingid
-      WHERE c.coursecode LIKE ? OR c.coursename LIKE ? OR i.firstname LIKE ? OR i.lastname LIKE ?
+      WHERE c.coursecode LIKE ? 
+      OR c.coursename LIKE ? 
+      OR i.firstname LIKE ? 
+      OR i.lastname LIKE ?
+      OR CONCAT(i.firstname, ' ', i.lastname) LIKE ?
     `;
 
-    const results = await queryPromise(dbRateMyCourse, searchQuery, [searchPattern, searchPattern, searchPattern, searchPattern]);
+    const results = await queryPromise(dbRateMyCourse, searchQuery, [
+      searchPattern, 
+      searchPattern, 
+      searchPattern, 
+      searchPattern,
+      searchPattern
+    ]);
 
     // Format results to match the expected structure
     const formattedResults = results.reduce((acc, row) => {
@@ -118,7 +128,7 @@ app.get('/api/search', async (req, res) => {
           firstname: row.firstname,
           lastname: row.lastname,
           department: row.department,
-          faculty: row.faculty,  // Include faculty in the response
+          faculty: row.faculty,  // Include faculty field
           academicyear: row.academicyear,
           semester: row.semester,
           section: row.section,
@@ -138,7 +148,7 @@ app.get('/api/search', async (req, res) => {
           neither: row.Neither,
           agree: row.Agree,
           stronglyagree: row.StronglyAgree,
-          median: row.Median,  // Ensure this is included
+          median: row.Median,  // Display the median (mean)
         });
       }
       return acc;
