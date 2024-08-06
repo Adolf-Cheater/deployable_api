@@ -126,18 +126,46 @@ app.get('/api/search', async (req, res) => {
     // Log retrieved data for debugging
     console.log('Query Results:', results);
 
-    // Check for each course whether courseTitle was matched
-    /*
-    results.forEach(row => {
-      if (row.courseTitle) {
-        console.log(`Matched courseTitle: ${row.courseTitle} for coursecode: ${row.coursecode}`);
-      } else {
-        console.log(`No courseTitle found, using coursename: ${row.coursename} for coursecode: ${row.coursecode}`);
-      }
-    });
-    */
+    // Grouping results by offeringid
+    const groupedResults = results.reduce((acc, row) => {
+      let existingOffering = acc.find(item => item.offeringid === row.offeringid);
 
-    res.json(results);
+      if (!existingOffering) {
+        existingOffering = {
+          offeringid: row.offeringid,
+          coursecode: row.coursecode,
+          coursename: row.coursename,
+          firstname: row.firstname,
+          lastname: row.lastname,
+          department: row.department,
+          faculty: row.faculty,
+          academicyear: row.academicyear,
+          semester: row.semester,
+          section: row.section,
+          enrollmentcount: row.enrollmentcount,
+          responsecount: row.responsecount,
+          lastupdated: row.lastupdated,
+          ratings: []
+        };
+        acc.push(existingOffering);
+      }
+
+      if (row.question) {
+        existingOffering.ratings.push({
+          question: row.question,
+          stronglydisagree: row.StronglyDisagree,
+          disagree: row.Disagree,
+          neither: row.Neither,
+          agree: row.Agree,
+          stronglyagree: row.StronglyAgree,
+          median: row.Median
+        });
+      }
+
+      return acc;
+    }, []);
+
+    res.json(groupedResults);
   } catch (error) {
     console.error('Database query error:', error);
     res.status(500).json({ error: 'Database error: ' + error.message });
