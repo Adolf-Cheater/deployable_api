@@ -73,12 +73,11 @@ app.get('/api/search', async (req, res) => {
   const searchPattern = `%${query}%`;
 
   try {
-    // Updated query to include courseofferdb for fetching course titles
     const searchQuery = `
       SELECT 
         co.offeringid,
         c.coursecode,
-        c.coursename,
+        COALESCE(offer.courseTitle, c.coursename) AS coursename, 
         i.firstname,
         i.lastname,
         d.DepartmentName AS department,
@@ -95,8 +94,7 @@ app.get('/api/search', async (req, res) => {
         sq.Neither,
         sq.Agree,
         sq.StronglyAgree,
-        sq.Median,
-        offer.courseTitle
+        sq.Median
       FROM courseofferings co
       JOIN courses c ON co.courseid = c.courseid
       JOIN instructors i ON co.instructorid = i.instructorid
@@ -111,22 +109,27 @@ app.get('/api/search', async (req, res) => {
       OR CONCAT(i.firstname, ' ', i.lastname) LIKE ?
     `;
 
-    const results = await queryPromise(dbRateMyCourse, searchQuery, [
-      searchPattern, 
-      searchPattern, 
-      searchPattern, 
+    const results = await queryPromise(dbRateMyCourse, [
+      searchQuery,
+      searchPattern,
+      searchPattern,
+      searchPattern,
       searchPattern,
       searchPattern
     ]);
 
-    // Format results to include the course title from courseofferdb
+    // Log each result's coursename field
+    results.forEach((result, index) => {
+      console.log(`Result ${index}: CourseCode - ${result.coursecode}, CourseName - ${result.coursename}`);
+    });
+
     const formattedResults = results.reduce((acc, row) => {
       let result = acc.find(item => item.offeringid === row.offeringid);
       if (!result) {
         result = {
           offeringid: row.offeringid,
           coursecode: row.coursecode,
-          coursename: row.courseTitle || row.coursename, // Use courseTitle from courseofferdb if available
+          coursename: row.coursename, // The correct course name should be here
           firstname: row.firstname,
           lastname: row.lastname,
           department: row.department,
