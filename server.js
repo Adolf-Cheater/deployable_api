@@ -109,19 +109,19 @@ app.get('/api/search', async (req, res) => {
       OR CONCAT(i.firstname, ' ', i.lastname) LIKE ?
     `;
 
-    const results = await queryPromise(dbRateMyCourse, [
-      searchQuery,
-      searchPattern,
-      searchPattern,
-      searchPattern,
+    console.log('SQL Query:', searchQuery);
+    console.log('SQL Values:', [searchPattern, searchPattern, searchPattern, searchPattern, searchPattern]);
+
+    const results = await queryPromise(dbRateMyCourse, searchQuery, [
+      searchPattern, 
+      searchPattern, 
+      searchPattern, 
       searchPattern,
       searchPattern
     ]);
 
-    // Log each result's coursename field
-    results.forEach((result, index) => {
-      console.log(`Result ${index}: CourseCode - ${result.coursecode}, CourseName - ${result.coursename}`);
-    });
+    // Log results for debugging
+    console.log('Query Results:', results);
 
     const formattedResults = results.reduce((acc, row) => {
       let result = acc.find(item => item.offeringid === row.offeringid);
@@ -129,7 +129,7 @@ app.get('/api/search', async (req, res) => {
         result = {
           offeringid: row.offeringid,
           coursecode: row.coursecode,
-          coursename: row.coursename, // The correct course name should be here
+          coursename: row.coursename,
           firstname: row.firstname,
           lastname: row.lastname,
           department: row.department,
