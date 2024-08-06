@@ -53,25 +53,85 @@ app.get('/', (req, res) => {
   res.send('Server is running');
 });
 
-app.get('/api/search', (req, res) => {
-  const query = req.query.query;
-  // Construct the SQL query to search for matching courses or professors
-  const sqlQuery = `
-    SELECT * FROM courses_table
-    WHERE courseCode LIKE ? OR instructorName LIKE ?
-  `;
-
-  // Wildcard search pattern for SQL
+app.get('/api/search', async (req, res) => {
+  const { query } = req.query;
   const searchPattern = `%${query}%`;
 
-  dbRateMyCourse.query(sqlQuery, [searchPattern, searchPattern], (error, results) => {
-    if (error) {
-      console.error('Database query error:', error);
-      return res.status(500).json({ error: 'Database error' });
-    }
+  try {
+    // Query to search across courses and instructors
+    const searchQuery = `
+      SELECT 
+        co.offeringid,
+        c.coursecode,
+        c.coursename,
+        i.firstname,
+        i.lastname,
+        d.DepartmentName AS department,
+        co.academicyear,
+        co.semester,
+        co.section,
+        sr.enrollmentcount,
+        sr.responsecount,
+        sr.lastupdated,
+        sq.QuestionText AS question,
+        sq.StronglyDisagree,
+        sq.Disagree,
+        sq.Neither,
+        sq.Agree,
+        sq.StronglyAgree,
+        sq.Median
+      FROM courseofferings co
+      JOIN courses c ON co.courseid = c.courseid
+      JOIN instructors i ON co.instructorid = i.instructorid
+      JOIN departments d ON c.departmentid = d.DepartmentID
+      LEFT JOIN spot_ratings sr ON co.offeringid = sr.offeringid
+      LEFT JOIN spot_questions sq ON sr.ratingid = sq.ratingid
+      WHERE c.coursecode LIKE ? OR c.coursename LIKE ? OR i.firstname LIKE ? OR i.lastname LIKE ?
+    `;
 
-    res.status(200).json(results);
-  });
+    const results = await queryPromise(dbRateMyCourse, searchQuery, [searchPattern, searchPattern, searchPattern, searchPattern]);
+
+    // Format results to match the expected structure
+    const formattedResults = results.reduce((acc, row) => {
+      let result = acc.find(item => item.offeringid === row.offeringid);
+      if (!result) {
+        result = {
+          offeringid: row.offeringid,
+          coursecode: row.coursecode,
+          coursename: row.coursename,
+          firstname: row.firstname,
+          lastname: row.lastname,
+          department: row.department,
+          academicyear: row.academicyear,
+          semester: row.semester,
+          section: row.section,
+          enrollmentcount: row.enrollmentcount,
+          responsecount: row.responsecount,
+          lastupdated: row.lastupdated,
+          ratings: [],
+        };
+        acc.push(result);
+      }
+
+      if (row.question) {
+        result.ratings.push({
+          question: row.question,
+          stronglydisagree: row.StronglyDisagree,
+          disagree: row.Disagree,
+          neither: row.Neither,
+          agree: row.Agree,
+          stronglyagree: row.StronglyAgree,
+          median: row.Median,
+        });
+      }
+      return acc;
+    }, []);
+
+    res.json(formattedResults);
+  } catch (error) {
+    console.error('Database query error:', error);
+    res.status(500).json({ error: 'Database error: ' + error.message });
+  }
 });
 
 // Route handling for 'ratemycourse' related data
