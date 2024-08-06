@@ -82,6 +82,7 @@ app.get('/api/search', async (req, res) => {
         i.firstname,
         i.lastname,
         d.DepartmentName AS department,
+        d.Faculty AS faculty,  // Include faculty field
         co.academicyear,
         co.semester,
         co.section,
@@ -117,6 +118,7 @@ app.get('/api/search', async (req, res) => {
           firstname: row.firstname,
           lastname: row.lastname,
           department: row.department,
+          faculty: row.faculty,  // Include faculty in the response
           academicyear: row.academicyear,
           semester: row.semester,
           section: row.section,
@@ -136,7 +138,7 @@ app.get('/api/search', async (req, res) => {
           neither: row.Neither,
           agree: row.Agree,
           stronglyagree: row.StronglyAgree,
-          median: row.Median,
+          median: row.Median,  // Ensure this is included
         });
       }
       return acc;
