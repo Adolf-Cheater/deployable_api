@@ -48,6 +48,21 @@ dbRateMyCourse.connect((err) => {
   // Additional setup for ratemycourse, if needed
 });
 
+// Define queryPromise function
+function queryPromise(db, sql, values) {
+  return new Promise((resolve, reject) => {
+    db.query(sql, values, (error, results) => {
+      if (error) {
+        console.error('SQL Error:', error);
+        console.error('SQL Query:', sql);
+        console.error('SQL Values:', values);
+        return reject(error);
+      }
+      resolve(results);
+    });
+  });
+}
+
 // Middleware for the root route
 app.get('/', (req, res) => {
   res.send('Server is running');
