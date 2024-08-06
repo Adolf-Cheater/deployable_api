@@ -82,7 +82,7 @@ app.get('/api/search', async (req, res) => {
         i.firstname,
         i.lastname,
         d.DepartmentName AS department,
-        d.Faculty AS faculty,  // Include faculty field
+        d.Faculty AS faculty,  
         co.academicyear,
         co.semester,
         co.section,
