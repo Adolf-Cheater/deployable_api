@@ -77,7 +77,10 @@ app.get('/api/search', async (req, res) => {
       SELECT 
         co.offeringid,
         c.coursecode,
-        COALESCE(offer.courseTitle, c.coursename) AS coursename, 
+        CASE 
+          WHEN offer.courseTitle IS NOT NULL THEN offer.courseTitle 
+          ELSE c.coursename 
+        END AS coursename, 
         i.firstname,
         i.lastname,
         d.DepartmentName AS department,
