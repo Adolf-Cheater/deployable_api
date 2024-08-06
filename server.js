@@ -101,7 +101,7 @@ app.get('/api/search', async (req, res) => {
       JOIN departments d ON c.departmentid = d.DepartmentID
       LEFT JOIN spot_ratings sr ON co.offeringid = sr.offeringid
       LEFT JOIN spot_questions sq ON sr.ratingid = sq.ratingid
-      LEFT JOIN courseofferdb offer ON c.courseLetter = offer.courseLetter AND c.courseNumber = offer.courseNumber
+      LEFT JOIN courseofferdb offer ON CONCAT(offer.courseLetter, offer.courseNumber) = c.coursecode
       WHERE c.coursecode LIKE ? 
       OR c.coursename LIKE ? 
       OR i.firstname LIKE ? 
@@ -119,9 +119,6 @@ app.get('/api/search', async (req, res) => {
       searchPattern,
       searchPattern
     ]);
-
-    // Log results for debugging
-    console.log('Query Results:', results);
 
     const formattedResults = results.reduce((acc, row) => {
       let result = acc.find(item => item.offeringid === row.offeringid);
