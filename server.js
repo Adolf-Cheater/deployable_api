@@ -53,6 +53,27 @@ app.get('/', (req, res) => {
   res.send('Server is running');
 });
 
+app.get('/api/search', (req, res) => {
+  const query = req.query.query;
+  // Construct the SQL query to search for matching courses or professors
+  const sqlQuery = `
+    SELECT * FROM courses_table
+    WHERE courseCode LIKE ? OR instructorName LIKE ?
+  `;
+
+  // Wildcard search pattern for SQL
+  const searchPattern = `%${query}%`;
+
+  dbRateMyCourse.query(sqlQuery, [searchPattern, searchPattern], (error, results) => {
+    if (error) {
+      console.error('Database query error:', error);
+      return res.status(500).json({ error: 'Database error' });
+    }
+
+    res.status(200).json(results);
+  });
+});
+
 // Route handling for 'ratemycourse' related data
 app.use('/api', spotDataUpload(dbRateMyCourse));
 
