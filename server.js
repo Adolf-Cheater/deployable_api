@@ -169,7 +169,7 @@ app.get('/api/search', async (req, res) => {
       OR CONCAT(i.firstname, ' ', i.lastname) LIKE ?
     `;
 
-    const results = await queryPromise(dbRateMyCourse, searchQuery, [
+    let results = await queryPromise(dbRateMyCourse, searchQuery, [
       searchPattern, 
       searchPattern, 
       searchPattern, 
@@ -178,7 +178,7 @@ app.get('/api/search', async (req, res) => {
     ]);
 
     // Grouping results by offeringid
-    const groupedResults = results.reduce((acc, row) => {
+    results = results.reduce((acc, row) => {
       let existingOffering = acc.find(item => item.offeringid === row.offeringid);
 
       if (!existingOffering) {
@@ -196,7 +196,8 @@ app.get('/api/search', async (req, res) => {
           enrollmentcount: row.enrollmentcount,
           responsecount: row.responsecount,
           lastupdated: row.lastupdated,
-          ratings: []
+          ratings: [],
+          gpas: []
         };
         acc.push(existingOffering);
       }
@@ -216,12 +217,28 @@ app.get('/api/search', async (req, res) => {
       return acc;
     }, []);
 
-    res.json(groupedResults);
+    // Cross-reference with crowdsourcedb for GPA data
+    for (let result of results) {
+      const gpaQuery = `
+        SELECT gpa, classSize, term, section
+        FROM crowdsourcedb
+        WHERE courseNumber = ?
+        AND professorNames LIKE CONCAT('%', ?, '%')
+      `;
+      const gpaResults = await queryPromise(dbRateMyCourse, gpaQuery, [
+        result.coursecode,
+        `${result.firstname} ${result.lastname}`
+      ]);
+      result.gpas = gpaResults;
+    }
+
+    res.json(results);
   } catch (error) {
     console.error('Database query error:', error);
     res.status(500).json({ error: 'Database error: ' + error.message });
   }
 });
+
 
 // Route handling for 'ratemycourse' related data
 app.use('/api', spotDataUpload(dbRateMyCourse));
