@@ -93,7 +93,7 @@ app.get('/api/professor', async (req, res) => {
       SELECT co.offeringid, c.coursecode, c.coursename, co.academicyear, co.semester, co.section, cs.GPA AS gpa
       FROM courseofferings co
       JOIN courses c ON co.courseid = c.courseid
-      LEFT JOIN crowdsourcedb cs ON c.coursecode = cs.CourseNumber AND cs.ProfessorName LIKE CONCAT('%', ?, '%')
+      LEFT JOIN crowdsourcedb cs ON c.coursecode = cs.courseNumber AND cs.professorName LIKE CONCAT('%', ?, '%')
       WHERE co.instructorid = ?
     `;
     const coursesResults = await queryPromise(dbRateMyCourse, coursesQuery, [`${firstname} ${lastname}`, professor.instructorid]);
