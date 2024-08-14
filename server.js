@@ -72,6 +72,10 @@ app.get('/api/professor', async (req, res) => {
   const { name } = req.query;
   const [lastname, firstname] = name.split('-');
 
+  if (!firstname || !lastname) {
+    return res.status(400).json({ error: 'Invalid professor name format' });
+  }
+
   try {
     // Fetch professor details
     const professorQuery = `
@@ -90,13 +94,20 @@ app.get('/api/professor', async (req, res) => {
 
     // Fetch courses taught by the professor and their GPA
     const coursesQuery = `
-      SELECT co.offeringid, c.coursecode, c.coursename, co.academicyear, co.semester, co.section, cs.GPA AS gpa
+      SELECT co.offeringid, c.coursecode, c.coursename, co.academicyear, co.semester, co.section, 
+             cs.gpa, cs.classSize, cs.term
       FROM courseofferings co
       JOIN courses c ON co.courseid = c.courseid
-      LEFT JOIN crowdsourcedb cs ON c.coursecode = cs.courseNumber AND cs.professorName LIKE CONCAT('%', ?, '%')
+      LEFT JOIN crowdsourcedb cs ON c.coursecode = cs.courseNumber 
+        AND cs.professorNames LIKE CONCAT('%', ?, '%')
+        AND cs.term = CONCAT(co.academicyear, ' ', co.semester) 
+        AND cs.section = co.section
       WHERE co.instructorid = ?
     `;
-    const coursesResults = await queryPromise(dbRateMyCourse, coursesQuery, [`${firstname} ${lastname}`, professor.instructorid]);
+    const coursesResults = await queryPromise(dbRateMyCourse, coursesQuery, [
+      `${firstname} ${lastname}`, 
+      professor.instructorid
+    ]);
 
     res.json({
       professor: professor,
@@ -107,6 +118,7 @@ app.get('/api/professor', async (req, res) => {
     res.status(500).json({ error: 'Database error: ' + error.message });
   }
 });
+
 
 app.get('/api/search', async (req, res) => {
   const { query } = req.query;
