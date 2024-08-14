@@ -68,97 +68,156 @@ app.get('/', (req, res) => {
   res.send('Server is running');
 });
 
-app.get('/api/professor', async (req, res) => {
-  const { name } = req.query;
-  const [lastname, firstname] = name.split('-');
-
+app.get('/api/all-data', async (req, res) => {
   try {
-    // Fetch professor details
-    const professorQuery = `
-      SELECT i.instructorid, i.firstname, i.lastname, d.DepartmentName AS department, d.Faculty AS faculty
-      FROM instructors i
-      JOIN departments d ON i.departmentid = d.DepartmentID
-      WHERE i.firstname = ? AND i.lastname = ?
-    `;
-    const professorResults = await queryPromise(dbRateMyCourse, professorQuery, [firstname, lastname]);
-
-    if (professorResults.length === 0) {
-      return res.status(404).json({ error: 'Professor not found' });
-    }
-
-    const professor = professorResults[0];
-
-    // Fetch courses taught by the professor and their GPA
     const coursesQuery = `
-      SELECT co.offeringid, c.coursecode, c.coursename, co.academicyear, co.semester, co.section, cs.GPA AS gpa
-      FROM courseofferings co
-      JOIN courses c ON co.courseid = c.courseid
-      LEFT JOIN crowdsourcedb cs ON c.coursecode = cs.CourseNumber AND cs.ProfessorName LIKE CONCAT('%', ?, '%')
-      WHERE co.instructorid = ?
+      SELECT DISTINCT c.coursecode, c.coursename
+      FROM courses c
+      JOIN courseofferings co ON c.courseid = co.courseid
+      ORDER BY c.coursecode
     `;
-    const coursesResults = await queryPromise(dbRateMyCourse, coursesQuery, [`${firstname} ${lastname}`, professor.instructorid]);
 
-    res.json({
-      professor: professor,
-      courses: coursesResults,
-    });
+    const professorsQuery = `
+      SELECT DISTINCT i.firstname, i.lastname, d.DepartmentName AS department
+      FROM instructors i
+      JOIN courseofferings co ON i.instructorid = co.instructorid
+      JOIN courses c ON co.courseid = c.courseid
+      JOIN departments d ON c.departmentid = d.DepartmentID
+      ORDER BY i.lastname, i.firstname
+    `;
+
+    const [courses, professors] = await Promise.all([
+      queryPromise(dbRateMyCourse, coursesQuery),
+      queryPromise(dbRateMyCourse, professorsQuery)
+    ]);
+
+    res.json({ courses, professors });
   } catch (error) {
-    console.error('Database query error:', error);
+    console.error('Error fetching all data:', error);
     res.status(500).json({ error: 'Database error: ' + error.message });
   }
 });
 
 app.get('/api/search', async (req, res) => {
-  const { query } = req.query;
-  const searchPattern = `%${query}%`;
+  const { query, type } = req.query;
+  let searchQuery;
+  let queryParams;
 
   try {
-    const searchQuery = `
-      SELECT 
-        co.offeringid,
-        c.coursecode,
-        COALESCE(offer.courseTitle, c.coursename) AS coursename,
-        i.firstname,
-        i.lastname,
-        d.DepartmentName AS department,
-        d.Faculty AS faculty,
-        co.academicyear,
-        co.semester,
-        co.section,
-        sr.enrollmentcount,
-        sr.responsecount,
-        sr.lastupdated,
-        sq.QuestionText AS question,
-        sq.StronglyDisagree,
-        sq.Disagree,
-        sq.Neither,
-        sq.Agree,
-        sq.StronglyAgree,
-        sq.Median
-      FROM courseofferings co
-      JOIN courses c ON co.courseid = c.courseid
-      JOIN instructors i ON co.instructorid = i.instructorid
-      JOIN departments d ON c.departmentid = d.DepartmentID
-      LEFT JOIN spot_ratings sr ON co.offeringid = sr.offeringid
-      LEFT JOIN spot_questions sq ON sr.ratingid = sq.ratingid
-      LEFT JOIN courseofferdb offer ON CONCAT(offer.courseLetter, ' ', offer.courseNumber) = c.coursecode
-      WHERE c.coursecode LIKE ? 
-      OR c.coursename LIKE ? 
-      OR i.firstname LIKE ? 
-      OR i.lastname LIKE ?
-      OR CONCAT(i.firstname, ' ', i.lastname) LIKE ?
-    `;
+    console.log(`Received search query: ${query}, type: ${type}`);
 
-    const results = await queryPromise(dbRateMyCourse, searchQuery, [
-      searchPattern, 
-      searchPattern, 
-      searchPattern, 
-      searchPattern,
-      searchPattern
-    ]);
+    if (type === 'course') {
+      searchQuery = `
+        SELECT 
+          co.offeringid,
+          c.coursecode,
+          COALESCE(offer.courseTitle, c.coursename) AS coursename,
+          i.firstname,
+          i.lastname,
+          d.DepartmentName AS department,
+          d.Faculty AS faculty,
+          co.academicyear,
+          co.semester,
+          co.section,
+          sr.enrollmentcount,
+          sr.responsecount,
+          sr.lastupdated,
+          sq.QuestionText AS question,
+          sq.StronglyDisagree,
+          sq.Disagree,
+          sq.Neither,
+          sq.Agree,
+          sq.StronglyAgree,
+          sq.Median
+        FROM courseofferings co
+        JOIN courses c ON co.courseid = c.courseid
+        JOIN instructors i ON co.instructorid = i.instructorid
+        JOIN departments d ON c.departmentid = d.DepartmentID
+        LEFT JOIN spot_ratings sr ON co.offeringid = sr.offeringid
+        LEFT JOIN spot_questions sq ON sr.ratingid = sq.ratingid
+        LEFT JOIN courseofferdb offer ON CONCAT(offer.courseLetter, ' ', offer.courseNumber) = c.coursecode
+        WHERE c.coursecode = ?
+      `;
+      queryParams = [query];
+    } else if (type === 'professor') {
+      const [lastName, firstName] = query.split(',').map(name => name.trim());
+      searchQuery = `
+        SELECT 
+          co.offeringid,
+          c.coursecode,
+          COALESCE(offer.courseTitle, c.coursename) AS coursename,
+          i.firstname,
+          i.lastname,
+          d.DepartmentName AS department,
+          d.Faculty AS faculty,
+          co.academicyear,
+          co.semester,
+          co.section,
+          sr.enrollmentcount,
+          sr.responsecount,
+          sr.lastupdated,
+          sq.QuestionText AS question,
+          sq.StronglyDisagree,
+          sq.Disagree,
+          sq.Neither,
+          sq.Agree,
+          sq.StronglyAgree,
+          sq.Median
+        FROM courseofferings co
+        JOIN courses c ON co.courseid = c.courseid
+        JOIN instructors i ON co.instructorid = i.instructorid
+        JOIN departments d ON c.departmentid = d.DepartmentID
+        LEFT JOIN spot_ratings sr ON co.offeringid = sr.offeringid
+        LEFT JOIN spot_questions sq ON sr.ratingid = sq.ratingid
+        LEFT JOIN courseofferdb offer ON CONCAT(offer.courseLetter, ' ', offer.courseNumber) = c.coursecode
+        WHERE i.lastname = ? AND i.firstname = ?
+      `;
+      queryParams = [lastName, firstName];
+    } else {
+      // General search
+      const searchPattern = `%${query}%`;
+      searchQuery = `
+        SELECT 
+          co.offeringid,
+          c.coursecode,
+          COALESCE(offer.courseTitle, c.coursename) AS coursename,
+          i.firstname,
+          i.lastname,
+          d.DepartmentName AS department,
+          d.Faculty AS faculty,
+          co.academicyear,
+          co.semester,
+          co.section,
+          sr.enrollmentcount,
+          sr.responsecount,
+          sr.lastupdated,
+          sq.QuestionText AS question,
+          sq.StronglyDisagree,
+          sq.Disagree,
+          sq.Neither,
+          sq.Agree,
+          sq.StronglyAgree,
+          sq.Median
+        FROM courseofferings co
+        JOIN courses c ON co.courseid = c.courseid
+        JOIN instructors i ON co.instructorid = i.instructorid
+        JOIN departments d ON c.departmentid = d.DepartmentID
+        LEFT JOIN spot_ratings sr ON co.offeringid = sr.offeringid
+        LEFT JOIN spot_questions sq ON sr.ratingid = sq.ratingid
+        LEFT JOIN courseofferdb offer ON CONCAT(offer.courseLetter, ' ', offer.courseNumber) = c.coursecode
+        WHERE c.coursecode LIKE ? 
+        OR c.coursename LIKE ? 
+        OR i.firstname LIKE ? 
+        OR i.lastname LIKE ?
+        OR CONCAT(i.firstname, ' ', i.lastname) LIKE ?
+      `;
+      queryParams = [searchPattern, searchPattern, searchPattern, searchPattern, searchPattern];
+    }
+
+    let results = await queryPromise(dbRateMyCourse, searchQuery, queryParams);
 
     // Grouping results by offeringid
-    const groupedResults = results.reduce((acc, row) => {
+    results = results.reduce((acc, row) => {
       let existingOffering = acc.find(item => item.offeringid === row.offeringid);
 
       if (!existingOffering) {
@@ -176,7 +235,8 @@ app.get('/api/search', async (req, res) => {
           enrollmentcount: row.enrollmentcount,
           responsecount: row.responsecount,
           lastupdated: row.lastupdated,
-          ratings: []
+          ratings: [],
+          gpas: []
         };
         acc.push(existingOffering);
       }
@@ -196,7 +256,23 @@ app.get('/api/search', async (req, res) => {
       return acc;
     }, []);
 
-    res.json(groupedResults);
+    // Cross-reference with crowdsourcedb for GPA data
+    for (let result of results) {
+      const gpaQuery = `
+        SELECT gpa, classSize, term, section
+        FROM crowdsourcedb
+        WHERE courseNumber = ?
+        AND professorNames LIKE CONCAT('%', ?, '%')
+      `;
+      const gpaResults = await queryPromise(dbRateMyCourse, gpaQuery, [
+        result.coursecode,
+        `${result.firstname} ${result.lastname}`
+      ]);
+      result.gpas = gpaResults;
+    }
+
+    console.log(`Search results for query "${query}":`, results);
+    res.json(results);
   } catch (error) {
     console.error('Database query error:', error);
     res.status(500).json({ error: 'Database error: ' + error.message });
