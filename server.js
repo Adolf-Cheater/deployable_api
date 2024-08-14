@@ -68,12 +68,51 @@ app.get('/', (req, res) => {
   res.send('Server is running');
 });
 
+app.get('/api/professor', async (req, res) => {
+  const { name } = req.query;
+  const [lastname, firstname] = name.split('-');
+
+  try {
+    // Fetch professor details
+    const professorQuery = `
+      SELECT i.instructorid, i.firstname, i.lastname, d.DepartmentName AS department, d.Faculty AS faculty
+      FROM instructors i
+      JOIN departments d ON i.departmentid = d.DepartmentID
+      WHERE i.firstname = ? AND i.lastname = ?
+    `;
+    const professorResults = await queryPromise(dbRateMyCourse, professorQuery, [firstname, lastname]);
+
+    if (professorResults.length === 0) {
+      return res.status(404).json({ error: 'Professor not found' });
+    }
+
+    const professor = professorResults[0];
+
+    // Fetch courses taught by the professor and their GPA
+    const coursesQuery = `
+      SELECT co.offeringid, c.coursecode, c.coursename, co.academicyear, co.semester, co.section, cs.GPA AS gpa
+      FROM courseofferings co
+      JOIN courses c ON co.courseid = c.courseid
+      LEFT JOIN crowdsourcedb cs ON c.coursecode = cs.CourseNumber AND cs.ProfessorName LIKE CONCAT('%', ?, '%')
+      WHERE co.instructorid = ?
+    `;
+    const coursesResults = await queryPromise(dbRateMyCourse, coursesQuery, [`${firstname} ${lastname}`, professor.instructorid]);
+
+    res.json({
+      professor: professor,
+      courses: coursesResults,
+    });
+  } catch (error) {
+    console.error('Database query error:', error);
+    res.status(500).json({ error: 'Database error: ' + error.message });
+  }
+});
+
 app.get('/api/search', async (req, res) => {
   const { query } = req.query;
   const searchPattern = `%${query}%`;
 
   try {
-    console.log(`Received search query: ${query}`);
     const searchQuery = `
       SELECT 
         co.offeringid,
@@ -110,7 +149,7 @@ app.get('/api/search', async (req, res) => {
       OR CONCAT(i.firstname, ' ', i.lastname) LIKE ?
     `;
 
-    let results = await queryPromise(dbRateMyCourse, searchQuery, [
+    const results = await queryPromise(dbRateMyCourse, searchQuery, [
       searchPattern, 
       searchPattern, 
       searchPattern, 
@@ -119,7 +158,7 @@ app.get('/api/search', async (req, res) => {
     ]);
 
     // Grouping results by offeringid
-    results = results.reduce((acc, row) => {
+    const groupedResults = results.reduce((acc, row) => {
       let existingOffering = acc.find(item => item.offeringid === row.offeringid);
 
       if (!existingOffering) {
@@ -137,8 +176,7 @@ app.get('/api/search', async (req, res) => {
           enrollmentcount: row.enrollmentcount,
           responsecount: row.responsecount,
           lastupdated: row.lastupdated,
-          ratings: [],
-          gpas: []
+          ratings: []
         };
         acc.push(existingOffering);
       }
@@ -158,23 +196,7 @@ app.get('/api/search', async (req, res) => {
       return acc;
     }, []);
 
-    // Cross-reference with crowdsourcedb for GPA data
-    for (let result of results) {
-      const gpaQuery = `
-        SELECT gpa, classSize, term, section
-        FROM crowdsourcedb
-        WHERE courseNumber = ?
-        AND professorNames LIKE CONCAT('%', ?, '%')
-      `;
-      const gpaResults = await queryPromise(dbRateMyCourse, gpaQuery, [
-        result.coursecode,
-        `${result.firstname} ${result.lastname}`
-      ]);
-      result.gpas = gpaResults;
-    }
-
-    console.log(`Search results for query "${query}":`, results);
-    res.json(results);
+    res.json(groupedResults);
   } catch (error) {
     console.error('Database query error:', error);
     res.status(500).json({ error: 'Database error: ' + error.message });
