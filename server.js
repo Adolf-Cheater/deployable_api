@@ -127,12 +127,12 @@ app.get('/api/professor', async (req, res) => {
 });
 
 
-
 app.get('/api/search', async (req, res) => {
   const { query } = req.query;
   const searchPattern = `%${query}%`;
 
   try {
+    console.log(`Received search query: ${query}`);
     const searchQuery = `
       SELECT 
         co.offeringid,
@@ -232,13 +232,13 @@ app.get('/api/search', async (req, res) => {
       result.gpas = gpaResults;
     }
 
+    console.log(`Search results for query "${query}":`, results);
     res.json(results);
   } catch (error) {
     console.error('Database query error:', error);
     res.status(500).json({ error: 'Database error: ' + error.message });
   }
 });
-
 
 // Route handling for 'ratemycourse' related data
 app.use('/api', spotDataUpload(dbRateMyCourse));
