@@ -72,12 +72,16 @@ app.get('/api/professor', async (req, res) => {
   const { name } = req.query;
   const [lastname, firstname] = name.split('-');
 
+  console.log(`Received request for professor: ${firstname} ${lastname}`);
+
   if (!firstname || !lastname) {
+    console.log('Invalid professor name format');
     return res.status(400).json({ error: 'Invalid professor name format' });
   }
 
   try {
     // Fetch professor details
+    console.log('Executing professor query...');
     const professorQuery = `
       SELECT i.instructorid, i.firstname, i.lastname, d.DepartmentName AS department, d.Faculty AS faculty
       FROM instructors i
@@ -87,12 +91,14 @@ app.get('/api/professor', async (req, res) => {
     const professorResults = await queryPromise(dbRateMyCourse, professorQuery, [firstname, lastname]);
 
     if (professorResults.length === 0) {
+      console.log('Professor not found');
       return res.status(404).json({ error: 'Professor not found' });
     }
 
     const professor = professorResults[0];
 
     // Fetch courses taught by the professor and their GPA
+    console.log('Executing courses query...');
     const coursesQuery = `
       SELECT co.offeringid, c.coursecode, c.coursename, co.academicyear, co.semester, co.section, 
              cs.gpa, cs.classSize, cs.term
@@ -109,6 +115,7 @@ app.get('/api/professor', async (req, res) => {
       professor.instructorid
     ]);
 
+    console.log('Returning professor and courses data...');
     res.json({
       professor: professor,
       courses: coursesResults,
@@ -118,6 +125,7 @@ app.get('/api/professor', async (req, res) => {
     res.status(500).json({ error: 'Database error: ' + error.message });
   }
 });
+
 
 
 app.get('/api/search', async (req, res) => {
