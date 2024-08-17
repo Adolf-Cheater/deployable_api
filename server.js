@@ -100,8 +100,7 @@ app.get('/api/all-data', async (req, res) => {
 });
 
 app.get('/api/search', async (req, res) => {
-  const { query, type, page = 1, limit = 10 } = req.query; // Default limit is 10
-  const offset = (page - 1) * limit;
+  const { query, type } = req.query;
   let searchQuery;
   let queryParams;
 
@@ -139,9 +138,8 @@ app.get('/api/search', async (req, res) => {
         LEFT JOIN spot_questions sq ON sr.ratingid = sq.ratingid
         LEFT JOIN courseofferdb offer ON CONCAT(offer.courseLetter, ' ', offer.courseNumber) = c.coursecode
         WHERE c.coursecode = ?
-        LIMIT ? OFFSET ?
       `;
-      queryParams = [query, parseInt(limit), parseInt(offset)];
+      queryParams = [query];
     } else if (type === 'professor') {
       const [lastName, firstName] = query.split(',').map(name => name.trim());
       searchQuery = `
@@ -174,9 +172,8 @@ app.get('/api/search', async (req, res) => {
         LEFT JOIN spot_questions sq ON sr.ratingid = sq.ratingid
         LEFT JOIN courseofferdb offer ON CONCAT(offer.courseLetter, ' ', offer.courseNumber) = c.coursecode
         WHERE i.lastname = ? AND i.firstname = ?
-        LIMIT ? OFFSET ?
       `;
-      queryParams = [lastName, firstName, parseInt(limit), parseInt(offset)];
+      queryParams = [lastName, firstName];
     } else {
       // General search
       const searchPattern = `%${query}%`;
@@ -214,17 +211,8 @@ app.get('/api/search', async (req, res) => {
         OR i.firstname LIKE ? 
         OR i.lastname LIKE ?
         OR CONCAT(i.firstname, ' ', i.lastname) LIKE ?
-        LIMIT ? OFFSET ?
       `;
-      queryParams = [
-        searchPattern,
-        searchPattern,
-        searchPattern,
-        searchPattern,
-        searchPattern,
-        parseInt(limit),
-        parseInt(offset),
-      ];
+      queryParams = [searchPattern, searchPattern, searchPattern, searchPattern, searchPattern];
     }
 
     let results = await queryPromise(dbRateMyCourse, searchQuery, queryParams);
