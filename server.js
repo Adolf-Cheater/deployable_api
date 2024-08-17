@@ -4,89 +4,75 @@ const bodyParser = require('body-parser');
 const bcrypt = require('bcryptjs');
 const cors = require('cors');
 const compression = require('compression');
-const { Redis } = require('@upstash/redis');
-const spotDataUpload = require('./spotDataUpload');
 
 const app = express();
 app.use(bodyParser.json());
 app.use(cors());
 app.use(compression());
 
-// Set up Redis using Upstash
-const redis = new Redis({
-  url: process.env.REDIS_URL,
-  token: process.env.REDIS_TOKEN,
-});
-
 // MySQL connection pools
-const dbMytables = mysql.createPool({
-  host: process.env.DB_HOST,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: 'mytables',
+const dbConfig = {
+  host: 'rm-2ze8y04111hiut0r60o.mysql.rds.aliyuncs.com',
+  user: 'main',
+  password: 'Woshishabi2004',
   connectionLimit: 10
+};
+
+const dbMytables = mysql.createPool({
+  ...dbConfig,
+  database: 'mytables'
 });
 
 const dbRateMyCourse = mysql.createPool({
-  host: process.env.DB_HOST,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: 'ratemycourse',
-  connectionLimit: 10
-});
-
-// Handle pool errors
-dbMytables.on('error', (err) => {
-  console.error('Unexpected error on idle client', err);
-  process.exit(-1);
-});
-
-dbRateMyCourse.on('error', (err) => {
-  console.error('Unexpected error on idle client', err);
-  process.exit(-1);
+  ...dbConfig,
+  database: 'ratemycourse'
 });
 
 function queryPromise(db, sql, values) {
   return new Promise((resolve, reject) => {
-    db.getConnection((err, connection) => {
-      if (err) {
-        return reject(err);
+    db.query(sql, values, (error, results) => {
+      if (error) {
+        console.error('SQL Error:', error);
+        return reject(error);
       }
-      connection.query(sql, values, (error, results) => {
-        connection.release();
-        if (error) {
-          console.error('SQL Error:', error);
-          return reject(error);
-        }
-        resolve(results);
-      });
+      resolve(results);
     });
   });
+}
+
+// Simple in-memory cache
+const cache = new Map();
+const CACHE_TTL = 300000; // 5 minutes
+
+function getCachedData(key) {
+  const cachedItem = cache.get(key);
+  if (cachedItem && Date.now() - cachedItem.timestamp < CACHE_TTL) {
+    return cachedItem.data;
+  }
+  return null;
+}
+
+function setCachedData(key, data) {
+  cache.set(key, { data, timestamp: Date.now() });
 }
 
 app.get('/', (req, res) => {
   res.send('Server is running');
 });
 
-// Server-side Pagination for /api/all-data with Redis caching
-app.get('/api/all-data', async (req, res, next) => {
+app.get('/api/all-data', async (req, res) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 50;
   const offset = (page - 1) * limit;
-  const cacheKey = `all-data-page-${page}-limit-${limit}`;
+
+  const cacheKey = `all-data-${page}-${limit}`;
+  const cachedData = getCachedData(cacheKey);
+
+  if (cachedData) {
+    return res.json(cachedData);
+  }
 
   try {
-    let cachedData = await redis.get(cacheKey);
-    if (cachedData) {
-      console.log('Returning data from Redis cache');
-      try {
-        const parsedData = JSON.parse(cachedData);
-        return res.json(parsedData);
-      } catch (parseError) {
-        console.error('Error parsing Redis data:', parseError);
-      }
-    }
-
     const coursesQuery = `
       SELECT DISTINCT c.coursecode, c.coursename
       FROM courses c
@@ -94,6 +80,7 @@ app.get('/api/all-data', async (req, res, next) => {
       ORDER BY c.coursecode
       LIMIT ? OFFSET ?
     `;
+
     const professorsQuery = `
       SELECT DISTINCT i.firstname, i.lastname, d.DepartmentName AS department
       FROM instructors i
@@ -109,32 +96,27 @@ app.get('/api/all-data', async (req, res, next) => {
       queryPromise(dbRateMyCourse, professorsQuery, [limit, offset])
     ]);
 
-    const responseData = { courses, professors, page, limit };
-    await redis.set(cacheKey, JSON.stringify(responseData), { ex: 3600 });
-    res.json(responseData);
+    const result = { courses, professors, page, limit };
+    setCachedData(cacheKey, result);
+    res.json(result);
   } catch (error) {
-    next(error);
+    console.error('Error fetching all data:', error);
+    res.status(500).json({ error: 'Database error: ' + error.message });
   }
 });
 
-// Server-side Pagination for /api/search with Redis caching
-app.get('/api/search', async (req, res, next) => {
+app.get('/api/search', async (req, res) => {
   const { query, type, page = 1, limit = 50 } = req.query;
   const offset = (page - 1) * limit;
-  const cacheKey = `search-${type}-${query}-page-${page}-limit-${limit}`;
+
+  const cacheKey = `search-${type}-${query}-${page}-${limit}`;
+  const cachedData = getCachedData(cacheKey);
+
+  if (cachedData) {
+    return res.json(cachedData);
+  }
 
   try {
-    let cachedData = await redis.get(cacheKey);
-    if (cachedData) {
-      console.log('Returning search results from Redis cache');
-      try {
-        const parsedData = JSON.parse(cachedData);
-        return res.json(parsedData);
-      } catch (parseError) {
-        console.error('Error parsing Redis search data:', parseError);
-      }
-    }
-
     let searchQuery;
     let queryParams;
 
@@ -210,6 +192,7 @@ app.get('/api/search', async (req, res, next) => {
       `;
       queryParams = [lastName, firstName, parseInt(limit), parseInt(offset)];
     } else {
+      // General search
       const searchPattern = `%${query}%`;
       searchQuery = `
         SELECT 
@@ -272,7 +255,7 @@ app.get('/api/search', async (req, res, next) => {
           responsecount: row.responsecount,
           lastupdated: row.lastupdated,
           ratings: [],
-          gpas: [],
+          gpas: []
         };
         acc.push(existingOffering);
       }
@@ -285,7 +268,7 @@ app.get('/api/search', async (req, res, next) => {
           neither: row.Neither,
           agree: row.Agree,
           stronglyagree: row.StronglyAgree,
-          median: row.Median,
+          median: row.Median
         });
       }
 
@@ -299,27 +282,24 @@ app.get('/api/search', async (req, res, next) => {
         FROM crowdsourcedb
         WHERE courseNumber = ?
         AND professorNames LIKE CONCAT('%', ?, '%')
+        LIMIT 10
       `;
       const gpaResults = await queryPromise(dbRateMyCourse, gpaQuery, [
         result.coursecode,
-        `${result.firstname} ${result.lastname}`,
+        `${result.firstname} ${result.lastname}`
       ]);
       result.gpas = gpaResults;
     }
 
-    console.log(`Search results for query "${query}":`, results);
-    await redis.set(cacheKey, JSON.stringify(results), { ex: 3600 });
+    setCachedData(cacheKey, results);
     res.json(results);
   } catch (error) {
-    next(error);
+    console.error('Database query error:', error);
+    res.status(500).json({ error: 'Database error: ' + error.message });
   }
 });
 
-// Route handling for 'ratemycourse' related data
-app.use('/api', spotDataUpload(dbRateMyCourse));
-
-// Register route for main page (login_info table in 'mytables')
-app.post('/register', async (req, res, next) => {
+app.post('/register', async (req, res) => {
   const { username, password, dob, country } = req.body;
 
   if (!username || !password || !dob || !country) {
@@ -340,12 +320,12 @@ app.post('/register', async (req, res, next) => {
 
     res.status(200).json({ message: 'Registration successful' });
   } catch (error) {
-    next(error);
+    console.error('Database query error:', error);
+    res.status(500).json({ error: 'Database error' });
   }
 });
 
-// Register route for database access (users table in 'mytables')
-app.post('/register-db', async (req, res, next) => {
+app.post('/register-db', async (req, res) => {
   const { username, password } = req.body;
 
   if (!username || !password) {
@@ -366,12 +346,12 @@ app.post('/register-db', async (req, res, next) => {
 
     res.status(200).json({ message: 'Registration successful' });
   } catch (error) {
-    next(error);
+    console.error('Database query error:', error);
+    res.status(500).json({ error: 'Database error' });
   }
 });
 
-// Login route for main page (login_info table in 'mytables')
-app.post('/login', async (req, res, next) => {
+app.post('/login', async (req, res) => {
   const { username, password } = req.body;
 
   if (!username || !password) {
@@ -393,11 +373,12 @@ app.post('/login', async (req, res, next) => {
 
     res.status(200).json({ message: 'Login successful' });
   } catch (error) {
-    next(error);
+    console.error('Database query error:', error);
+    res.status(500).json({ error: 'Database error' });
   }
 });
 
-app.post('/api/checkExistingData', async (req, res, next) => {
+app.post('/api/checkExistingData', async (req, res) => {
   const { academicYear, courseCode, courseType, section, instructorFirstName, instructorLastName } = req.body;
 
   try {
@@ -415,12 +396,12 @@ app.post('/api/checkExistingData', async (req, res, next) => {
 
     res.json({ exists: !!existingData });
   } catch (error) {
-    next(error);
+    console.error('Error checking existing data:', error);
+    res.status(500).json({ error: 'Database error' });
   }
 });
 
-// Login route for database access (users table in 'mytables')
-app.post('/login-db', async (req, res, next) => {
+app.post('/login-db', async (req, res) => {
   const { username, password } = req.body;
 
   if (!username || !password) {
@@ -442,7 +423,8 @@ app.post('/login-db', async (req, res, next) => {
 
     res.status(200).json({ message: 'Login successful' });
   } catch (error) {
-    next(error);
+    console.error('Database query error:', error);
+    res.status(500).json({ error: 'Database error' });
   }
 });
 
@@ -452,8 +434,43 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'An unexpected error occurred' });
 });
 
+// Health check route
+app.get('/health', async (req, res) => {
+  try {
+    await Promise.all([
+      queryPromise(dbMytables, 'SELECT 1'),
+      queryPromise(dbRateMyCourse, 'SELECT 1')
+    ]);
+    res.status(200).json({ status: 'healthy' });
+  } catch (error) {
+    console.error('Health check failed:', error);
+    res.status(500).json({ status: 'unhealthy', error: error.message });
+  }
+});
+
 // Server start
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM signal received: closing HTTP server');
+  dbMytables.end((err) => {
+    if (err) {
+      console.error('Error closing mytables database connection:', err);
+    }
+    console.log('Mytables database connection closed');
+  });
+  dbRateMyCourse.end((err) => {
+    if (err) {
+      console.error('Error closing ratemycourse database connection:', err);
+    }
+    console.log('Ratemycourse database connection closed');
+  });
+  server.close(() => {
+    console.log('HTTP server closed');
+    process.exit(0);
+  });
 });
