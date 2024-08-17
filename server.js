@@ -3,12 +3,17 @@ const mysql = require('mysql');
 const bodyParser = require('body-parser');
 const bcrypt = require('bcryptjs');
 const cors = require('cors');
-const levenshtein = require('fast-levenshtein');
+const compression = require('compression');
+const redis = require('redis');
 const spotDataUpload = require('./spotDataUpload');
 
 const app = express();
 app.use(bodyParser.json());
 app.use(cors());
+app.use(compression());
+
+// Redis client for caching
+const cache = redis.createClient();
 
 // MySQL connection for 'mytables'
 const dbMytables = mysql.createConnection({
@@ -21,9 +26,9 @@ const dbMytables = mysql.createConnection({
 
 // MySQL connection for 'ratemycourse'
 const dbRateMyCourse = mysql.createConnection({
-  host: 'rm-2ze8y04111hiut0r60o.mysql.rds.aliyuncs.com', // same host
-  user: 'main', // same user
-  password: 'Woshishabi2004', // same password
+  host: 'rm-2ze8y04111hiut0r60o.mysql.rds.aliyuncs.com',
+  user: 'main',
+  password: 'Woshishabi2004',
   database: 'ratemycourse',
   connectTimeout: 10000
 });
@@ -34,8 +39,6 @@ dbMytables.connect((err) => {
     return;
   }
   console.log('Connected to mytables database.');
-
-  // Additional setup for mytables, if needed
 });
 
 dbRateMyCourse.connect((err) => {
@@ -44,18 +47,13 @@ dbRateMyCourse.connect((err) => {
     return;
   }
   console.log('Connected to ratemycourse database.');
-
-  // Additional setup for ratemycourse, if needed
 });
 
-// Define queryPromise function
 function queryPromise(db, sql, values) {
   return new Promise((resolve, reject) => {
     db.query(sql, values, (error, results) => {
       if (error) {
         console.error('SQL Error:', error);
-        console.error('SQL Query:', sql);
-        console.error('SQL Values:', values);
         return reject(error);
       }
       resolve(results);
@@ -63,222 +61,260 @@ function queryPromise(db, sql, values) {
   });
 }
 
-// Middleware for the root route
 app.get('/', (req, res) => {
   res.send('Server is running');
 });
 
+// Server-side Pagination for /api/all-data
 app.get('/api/all-data', async (req, res) => {
-  try {
-    const coursesQuery = `
-      SELECT DISTINCT c.coursecode, c.coursename
-      FROM courses c
-      JOIN courseofferings co ON c.courseid = co.courseid
-      ORDER BY c.coursecode
-    `;
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 50;
+  const offset = (page - 1) * limit;
+  const cacheKey = `all-data-page-${page}-limit-${limit}`;
 
-    const professorsQuery = `
-      SELECT DISTINCT i.firstname, i.lastname, d.DepartmentName AS department
-      FROM instructors i
-      JOIN courseofferings co ON i.instructorid = co.instructorid
-      JOIN courses c ON co.courseid = c.courseid
-      JOIN departments d ON c.departmentid = d.DepartmentID
-      ORDER BY i.lastname, i.firstname
-    `;
+  cache.get(cacheKey, async (err, cachedData) => {
+    if (err) throw err;
 
-    const [courses, professors] = await Promise.all([
-      queryPromise(dbRateMyCourse, coursesQuery),
-      queryPromise(dbRateMyCourse, professorsQuery)
-    ]);
+    if (cachedData) {
+      res.json(JSON.parse(cachedData));
+    } else {
+      try {
+        const coursesQuery = `
+          SELECT DISTINCT c.coursecode, c.coursename
+          FROM courses c
+          JOIN courseofferings co ON c.courseid = co.courseid
+          ORDER BY c.coursecode
+          LIMIT ? OFFSET ?
+        `;
+        const professorsQuery = `
+          SELECT DISTINCT i.firstname, i.lastname, d.DepartmentName AS department
+          FROM instructors i
+          JOIN courseofferings co ON i.instructorid = co.instructorid
+          JOIN courses c ON co.courseid = c.courseid
+          JOIN departments d ON c.departmentid = d.DepartmentID
+          ORDER BY i.lastname, i.firstname
+          LIMIT ? OFFSET ?
+        `;
 
-    res.json({ courses, professors });
-  } catch (error) {
-    console.error('Error fetching all data:', error);
-    res.status(500).json({ error: 'Database error: ' + error.message });
-  }
+        const [courses, professors] = await Promise.all([
+          queryPromise(dbRateMyCourse, coursesQuery, [limit, offset]),
+          queryPromise(dbRateMyCourse, professorsQuery, [limit, offset])
+        ]);
+
+        const responseData = { courses, professors, page, limit };
+        cache.setex(cacheKey, 3600, JSON.stringify(responseData)); // Cache for 1 hour
+        res.json(responseData);
+      } catch (error) {
+        console.error('Error fetching all data:', error);
+        res.status(500).json({ error: 'Database error: ' + error.message });
+      }
+    }
+  });
 });
 
+// Server-side Pagination for /api/search
 app.get('/api/search', async (req, res) => {
-  const { query, type } = req.query;
+  const { query, type, page = 1, limit = 50 } = req.query;
+  const offset = (page - 1) * limit;
   let searchQuery;
   let queryParams;
 
-  try {
-    console.log(`Received search query: ${query}, type: ${type}`);
+  const cacheKey = `search-${type}-${query}-page-${page}-limit-${limit}`;
+  cache.get(cacheKey, async (err, cachedData) => {
+    if (err) throw err;
 
-    if (type === 'course') {
-      searchQuery = `
-        SELECT 
-          co.offeringid,
-          c.coursecode,
-          COALESCE(offer.courseTitle, c.coursename) AS coursename,
-          i.firstname,
-          i.lastname,
-          d.DepartmentName AS department,
-          d.Faculty AS faculty,
-          co.academicyear,
-          co.semester,
-          co.section,
-          sr.enrollmentcount,
-          sr.responsecount,
-          sr.lastupdated,
-          sq.QuestionText AS question,
-          sq.StronglyDisagree,
-          sq.Disagree,
-          sq.Neither,
-          sq.Agree,
-          sq.StronglyAgree,
-          sq.Median
-        FROM courseofferings co
-        JOIN courses c ON co.courseid = c.courseid
-        JOIN instructors i ON co.instructorid = i.instructorid
-        JOIN departments d ON c.departmentid = d.DepartmentID
-        LEFT JOIN spot_ratings sr ON co.offeringid = sr.offeringid
-        LEFT JOIN spot_questions sq ON sr.ratingid = sq.ratingid
-        LEFT JOIN courseofferdb offer ON CONCAT(offer.courseLetter, ' ', offer.courseNumber) = c.coursecode
-        WHERE c.coursecode = ?
-      `;
-      queryParams = [query];
-    } else if (type === 'professor') {
-      const [lastName, firstName] = query.split(',').map(name => name.trim());
-      searchQuery = `
-        SELECT 
-          co.offeringid,
-          c.coursecode,
-          COALESCE(offer.courseTitle, c.coursename) AS coursename,
-          i.firstname,
-          i.lastname,
-          d.DepartmentName AS department,
-          d.Faculty AS faculty,
-          co.academicyear,
-          co.semester,
-          co.section,
-          sr.enrollmentcount,
-          sr.responsecount,
-          sr.lastupdated,
-          sq.QuestionText AS question,
-          sq.StronglyDisagree,
-          sq.Disagree,
-          sq.Neither,
-          sq.Agree,
-          sq.StronglyAgree,
-          sq.Median
-        FROM courseofferings co
-        JOIN courses c ON co.courseid = c.courseid
-        JOIN instructors i ON co.instructorid = i.instructorid
-        JOIN departments d ON c.departmentid = d.DepartmentID
-        LEFT JOIN spot_ratings sr ON co.offeringid = sr.offeringid
-        LEFT JOIN spot_questions sq ON sr.ratingid = sq.ratingid
-        LEFT JOIN courseofferdb offer ON CONCAT(offer.courseLetter, ' ', offer.courseNumber) = c.coursecode
-        WHERE i.lastname = ? AND i.firstname = ?
-      `;
-      queryParams = [lastName, firstName];
+    if (cachedData) {
+      res.json(JSON.parse(cachedData));
     } else {
-      // General search
-      const searchPattern = `%${query}%`;
-      searchQuery = `
-        SELECT 
-          co.offeringid,
-          c.coursecode,
-          COALESCE(offer.courseTitle, c.coursename) AS coursename,
-          i.firstname,
-          i.lastname,
-          d.DepartmentName AS department,
-          d.Faculty AS faculty,
-          co.academicyear,
-          co.semester,
-          co.section,
-          sr.enrollmentcount,
-          sr.responsecount,
-          sr.lastupdated,
-          sq.QuestionText AS question,
-          sq.StronglyDisagree,
-          sq.Disagree,
-          sq.Neither,
-          sq.Agree,
-          sq.StronglyAgree,
-          sq.Median
-        FROM courseofferings co
-        JOIN courses c ON co.courseid = c.courseid
-        JOIN instructors i ON co.instructorid = i.instructorid
-        JOIN departments d ON c.departmentid = d.DepartmentID
-        LEFT JOIN spot_ratings sr ON co.offeringid = sr.offeringid
-        LEFT JOIN spot_questions sq ON sr.ratingid = sq.ratingid
-        LEFT JOIN courseofferdb offer ON CONCAT(offer.courseLetter, ' ', offer.courseNumber) = c.coursecode
-        WHERE c.coursecode LIKE ? 
-        OR c.coursename LIKE ? 
-        OR i.firstname LIKE ? 
-        OR i.lastname LIKE ?
-        OR CONCAT(i.firstname, ' ', i.lastname) LIKE ?
-      `;
-      queryParams = [searchPattern, searchPattern, searchPattern, searchPattern, searchPattern];
-    }
+      try {
+        console.log(`Received search query: ${query}, type: ${type}`);
 
-    let results = await queryPromise(dbRateMyCourse, searchQuery, queryParams);
+        if (type === 'course') {
+          searchQuery = `
+            SELECT 
+              co.offeringid,
+              c.coursecode,
+              COALESCE(offer.courseTitle, c.coursename) AS coursename,
+              i.firstname,
+              i.lastname,
+              d.DepartmentName AS department,
+              d.Faculty AS faculty,
+              co.academicyear,
+              co.semester,
+              co.section,
+              sr.enrollmentcount,
+              sr.responsecount,
+              sr.lastupdated,
+              sq.QuestionText AS question,
+              sq.StronglyDisagree,
+              sq.Disagree,
+              sq.Neither,
+              sq.Agree,
+              sq.StronglyAgree,
+              sq.Median
+            FROM courseofferings co
+            JOIN courses c ON co.courseid = c.courseid
+            JOIN instructors i ON co.instructorid = i.instructorid
+            JOIN departments d ON c.departmentid = d.DepartmentID
+            LEFT JOIN spot_ratings sr ON co.offeringid = sr.offeringid
+            LEFT JOIN spot_questions sq ON sr.ratingid = sq.ratingid
+            LEFT JOIN courseofferdb offer ON CONCAT(offer.courseLetter, ' ', offer.courseNumber) = c.coursecode
+            WHERE c.coursecode = ?
+            LIMIT ? OFFSET ?
+          `;
+          queryParams = [query, parseInt(limit), parseInt(offset)];
+        } else if (type === 'professor') {
+          const [lastName, firstName] = query.split(',').map(name => name.trim());
+          searchQuery = `
+            SELECT 
+              co.offeringid,
+              c.coursecode,
+              COALESCE(offer.courseTitle, c.coursename) AS coursename,
+              i.firstname,
+              i.lastname,
+              d.DepartmentName AS department,
+              d.Faculty AS faculty,
+              co.academicyear,
+              co.semester,
+              co.section,
+              sr.enrollmentcount,
+              sr.responsecount,
+              sr.lastupdated,
+              sq.QuestionText AS question,
+              sq.StronglyDisagree,
+              sq.Disagree,
+              sq.Neither,
+              sq.Agree,
+              sq.StronglyAgree,
+              sq.Median
+            FROM courseofferings co
+            JOIN courses c ON co.courseid = c.courseid
+            JOIN instructors i ON co.instructorid = i.instructorid
+            JOIN departments d ON c.departmentid = d.DepartmentID
+            LEFT JOIN spot_ratings sr ON co.offeringid = sr.offeringid
+            LEFT JOIN spot_questions sq ON sr.ratingid = sq.ratingid
+            LEFT JOIN courseofferdb offer ON CONCAT(offer.courseLetter, ' ', offer.courseNumber) = c.coursecode
+            WHERE i.lastname = ? AND i.firstname = ?
+            LIMIT ? OFFSET ?
+          `;
+          queryParams = [lastName, firstName, parseInt(limit), parseInt(offset)];
+        } else {
+          // General search
+          const searchPattern = `%${query}%`;
+          searchQuery = `
+            SELECT 
+              co.offeringid,
+              c.coursecode,
+              COALESCE(offer.courseTitle, c.coursename) AS coursename,
+              i.firstname,
+              i.lastname,
+              d.DepartmentName AS department,
+              d.Faculty AS faculty,
+              co.academicyear,
+              co.semester,
+              co.section,
+              sr.enrollmentcount,
+              sr.responsecount,
+              sr.lastupdated,
+              sq.QuestionText AS question,
+              sq.StronglyDisagree,
+              sq.Disagree,
+              sq.Neither,
+              sq.Agree,
+              sq.StronglyAgree,
+              sq.Median
+            FROM courseofferings co
+            JOIN courses c ON co.courseid = c.courseid
+            JOIN instructors i ON co.instructorid = i.instructorid
+            JOIN departments d ON c.departmentid = d.DepartmentID
+            LEFT JOIN spot_ratings sr ON co.offeringid = sr.offeringid
+            LEFT JOIN spot_questions sq ON sr.ratingid = sq.ratingid
+            LEFT JOIN courseofferdb offer ON CONCAT(offer.courseLetter, ' ', offer.courseNumber) = c.coursecode
+            WHERE c.coursecode LIKE ? 
+            OR c.coursename LIKE ? 
+            OR i.firstname LIKE ? 
+            OR i.lastname LIKE ?
+                        OR CONCAT(i.firstname, ' ', i.lastname) LIKE ?
+            LIMIT ? OFFSET ?
+          `;
+          queryParams = [
+            searchPattern,
+            searchPattern,
+            searchPattern,
+            searchPattern,
+            searchPattern,
+            parseInt(limit),
+            parseInt(offset),
+          ];
+        }
 
-    // Grouping results by offeringid
-    results = results.reduce((acc, row) => {
-      let existingOffering = acc.find(item => item.offeringid === row.offeringid);
+        let results = await queryPromise(dbRateMyCourse, searchQuery, queryParams);
 
-      if (!existingOffering) {
-        existingOffering = {
-          offeringid: row.offeringid,
-          coursecode: row.coursecode,
-          coursename: row.coursename,
-          firstname: row.firstname,
-          lastname: row.lastname,
-          department: row.department,
-          faculty: row.faculty,
-          academicyear: row.academicyear,
-          semester: row.semester,
-          section: row.section,
-          enrollmentcount: row.enrollmentcount,
-          responsecount: row.responsecount,
-          lastupdated: row.lastupdated,
-          ratings: [],
-          gpas: []
-        };
-        acc.push(existingOffering);
+        // Grouping results by offeringid
+        results = results.reduce((acc, row) => {
+          let existingOffering = acc.find(item => item.offeringid === row.offeringid);
+
+          if (!existingOffering) {
+            existingOffering = {
+              offeringid: row.offeringid,
+              coursecode: row.coursecode,
+              coursename: row.coursename,
+              firstname: row.firstname,
+              lastname: row.lastname,
+              department: row.department,
+              faculty: row.faculty,
+              academicyear: row.academicyear,
+              semester: row.semester,
+              section: row.section,
+              enrollmentcount: row.enrollmentcount,
+              responsecount: row.responsecount,
+              lastupdated: row.lastupdated,
+              ratings: [],
+              gpas: [],
+            };
+            acc.push(existingOffering);
+          }
+
+          if (row.question) {
+            existingOffering.ratings.push({
+              question: row.question,
+              stronglydisagree: row.StronglyDisagree,
+              disagree: row.Disagree,
+              neither: row.Neither,
+              agree: row.Agree,
+              stronglyagree: row.StronglyAgree,
+              median: row.Median,
+            });
+          }
+
+          return acc;
+        }, []);
+
+        // Cross-reference with crowdsourcedb for GPA data
+        for (let result of results) {
+          const gpaQuery = `
+            SELECT gpa, classSize, term, section
+            FROM crowdsourcedb
+            WHERE courseNumber = ?
+            AND professorNames LIKE CONCAT('%', ?, '%')
+          `;
+          const gpaResults = await queryPromise(dbRateMyCourse, gpaQuery, [
+            result.coursecode,
+            `${result.firstname} ${result.lastname}`,
+          ]);
+          result.gpas = gpaResults;
+        }
+
+        console.log(`Search results for query "${query}":`, results);
+        cache.setex(cacheKey, 3600, JSON.stringify(results)); // Cache for 1 hour
+        res.json(results);
+      } catch (error) {
+        console.error('Database query error:', error);
+        res.status(500).json({ error: 'Database error: ' + error.message });
       }
-
-      if (row.question) {
-        existingOffering.ratings.push({
-          question: row.question,
-          stronglydisagree: row.StronglyDisagree,
-          disagree: row.Disagree,
-          neither: row.Neither,
-          agree: row.Agree,
-          stronglyagree: row.StronglyAgree,
-          median: row.Median
-        });
-      }
-
-      return acc;
-    }, []);
-
-    // Cross-reference with crowdsourcedb for GPA data
-    for (let result of results) {
-      const gpaQuery = `
-        SELECT gpa, classSize, term, section
-        FROM crowdsourcedb
-        WHERE courseNumber = ?
-        AND professorNames LIKE CONCAT('%', ?, '%')
-      `;
-      const gpaResults = await queryPromise(dbRateMyCourse, gpaQuery, [
-        result.coursecode,
-        `${result.firstname} ${result.lastname}`
-      ]);
-      result.gpas = gpaResults;
     }
-
-    console.log(`Search results for query "${query}":`, results);
-    res.json(results);
-  } catch (error) {
-    console.error('Database query error:', error);
-    res.status(500).json({ error: 'Database error: ' + error.message });
-  }
+  });
 });
-
 // Route handling for 'ratemycourse' related data
 app.use('/api', spotDataUpload(dbRateMyCourse));
 
@@ -372,6 +408,29 @@ app.post('/login', (req, res) => {
 
     res.status(200).json({ message: 'Login successful' });
   });
+});
+
+app.post('/api/checkExistingData', async (req, res) => {
+  const { academicYear, courseCode, courseType, section, instructorFirstName, instructorLastName } = req.body;
+
+  try {
+    const [existingData] = await queryPromise(dbRateMyCourse, `
+      SELECT * FROM courseofferings co
+      JOIN courses c ON co.courseid = c.courseid
+      JOIN instructors i ON co.instructorid = i.instructorid
+      WHERE co.academicyear = ?
+      AND c.coursecode = ?
+      AND co.semester = ?
+      AND co.section = ?
+      AND i.firstname = ?
+      AND i.lastname = ?
+    `, [academicYear, courseCode, courseType, section, instructorFirstName, instructorLastName]);
+
+    res.json({ exists: !!existingData });
+  } catch (error) {
+    console.error('Error checking existing data:', error);
+    res.status(500).json({ error: 'Database error' });
+  }
 });
 
 // Login route for database access (users table in 'mytables')
