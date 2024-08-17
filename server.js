@@ -9,7 +9,12 @@ const spotDataUpload = require('./spotDataUpload');
 
 const app = express();
 app.use(bodyParser.json());
-app.use(cors());
+app.use(cors({
+  origin: '*', // Allows all origins - use specific origin for more security
+  methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
+  preflightContinue: false,
+  optionsSuccessStatus: 204
+}));
 app.use(compression());
 
 const redis = Redis.fromEnv();
