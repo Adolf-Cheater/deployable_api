@@ -79,12 +79,7 @@ app.get('/api/all-data', async (req, res) => {
     let cachedData = await redis.get(cacheKey);
     if (cachedData) {
       console.log('Returning data from Redis cache');
-      // Ensure cached data is a string before parsing
-      if (typeof cachedData === 'string') {
-        res.json(JSON.parse(cachedData));
-      } else {
-        res.json(cachedData);
-      }
+      res.json(JSON.parse(cachedData));
     } else {
       const coursesQuery = `
         SELECT DISTINCT c.coursecode, c.coursename
@@ -109,8 +104,6 @@ app.get('/api/all-data', async (req, res) => {
       ]);
 
       const responseData = { courses, professors, page, limit };
-
-      // Explicitly stringify the response data before storing
       await redis.set(cacheKey, JSON.stringify(responseData), { ex: 3600 });
       res.json(responseData);
     }
@@ -129,17 +122,10 @@ app.get('/api/search', async (req, res) => {
   const cacheKey = `search-${type}-${query}-page-${page}-limit-${limit}`;
 
   try {
-    // Check Redis cache
     let cachedData = await redis.get(cacheKey);
-
     if (cachedData) {
       console.log('Returning search results from Redis cache');
-      // Ensure cached data is a string before parsing
-      if (typeof cachedData === 'string') {
-        return res.json(JSON.parse(cachedData));
-      } else {
-        return res.json(cachedData);
-      }
+      res.json(JSON.parse(cachedData));
     } else {
       let searchQuery;
       let queryParams;
@@ -334,6 +320,10 @@ app.get('/api/search', async (req, res) => {
   }
 });
 
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+  res.status(500).json({ error: 'An unexpected error occurred' });
+});
 
 // Route handling for 'ratemycourse' related data
 app.use('/api', spotDataUpload(dbRateMyCourse));
