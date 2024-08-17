@@ -76,10 +76,15 @@ app.get('/api/all-data', async (req, res) => {
   const cacheKey = `all-data-page-${page}-limit-${limit}`;
 
   try {
-    const cachedData = await redis.get(cacheKey);
+    let cachedData = await redis.get(cacheKey);
     if (cachedData) {
       console.log('Returning data from Redis cache');
-      res.json(JSON.parse(cachedData)); // Parse the cached JSON string
+      // Ensure cached data is a string before parsing
+      if (typeof cachedData === 'string') {
+        res.json(JSON.parse(cachedData));
+      } else {
+        res.json(cachedData);
+      }
     } else {
       const coursesQuery = `
         SELECT DISTINCT c.coursecode, c.coursename
@@ -104,7 +109,9 @@ app.get('/api/all-data', async (req, res) => {
       ]);
 
       const responseData = { courses, professors, page, limit };
-      await redis.set(cacheKey, JSON.stringify(responseData), { ex: 3600 }); // Store data as a JSON string
+
+      // Explicitly stringify the response data before storing
+      await redis.set(cacheKey, JSON.stringify(responseData), { ex: 3600 });
       res.json(responseData);
     }
   } catch (error) {
@@ -112,6 +119,7 @@ app.get('/api/all-data', async (req, res) => {
     res.status(500).json({ error: 'Database error: ' + error.message });
   }
 });
+
 
 
 // Server-side Pagination for /api/search with Redis caching
