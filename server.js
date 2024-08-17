@@ -15,6 +15,12 @@ app.use(compression());
 // Redis client for caching
 const cache = redis.createClient();
 
+cache.on('error', (err) => {
+  console.error('Redis Client Error:', err);
+});
+
+cache.connect().catch(console.error); // Ensure Redis connects successfully
+
 // MySQL connection for 'mytables'
 const dbMytables = mysql.createConnection({
   host: 'rm-2ze8y04111hiut0r60o.mysql.rds.aliyuncs.com',
@@ -72,6 +78,10 @@ app.get('/api/all-data', async (req, res) => {
   const offset = (page - 1) * limit;
   const cacheKey = `all-data-page-${page}-limit-${limit}`;
 
+  if (!cache.isOpen) {
+    await cache.connect(); // Ensure Redis is connected before use
+  }
+
   cache.get(cacheKey, async (err, cachedData) => {
     if (err) throw err;
 
@@ -120,6 +130,11 @@ app.get('/api/search', async (req, res) => {
   let queryParams;
 
   const cacheKey = `search-${type}-${query}-page-${page}-limit-${limit}`;
+
+  if (!cache.isOpen) {
+    await cache.connect(); // Ensure Redis is connected before use
+  }
+
   cache.get(cacheKey, async (err, cachedData) => {
     if (err) throw err;
 
@@ -230,11 +245,11 @@ app.get('/api/search', async (req, res) => {
             LEFT JOIN spot_ratings sr ON co.offeringid = sr.offeringid
             LEFT JOIN spot_questions sq ON sr.ratingid = sq.ratingid
             LEFT JOIN courseofferdb offer ON CONCAT(offer.courseLetter, ' ', offer.courseNumber) = c.coursecode
-            WHERE c.coursecode LIKE ? 
+                        WHERE c.coursecode LIKE ? 
             OR c.coursename LIKE ? 
             OR i.firstname LIKE ? 
             OR i.lastname LIKE ?
-                        OR CONCAT(i.firstname, ' ', i.lastname) LIKE ?
+            OR CONCAT(i.firstname, ' ', i.lastname) LIKE ?
             LIMIT ? OFFSET ?
           `;
           queryParams = [
@@ -315,6 +330,7 @@ app.get('/api/search', async (req, res) => {
     }
   });
 });
+
 // Route handling for 'ratemycourse' related data
 app.use('/api', spotDataUpload(dbRateMyCourse));
 
@@ -362,7 +378,7 @@ app.post('/register-db', (req, res) => {
   dbMytables.query(checkUserQuery, [username], (error, results) => {
     if (error) {
       console.error('Database query error:', error);
-      return res.status(500).json({ error });
+      return res.status(500).json({ error: 'Database error' });
     }
 
     if (results.length > 0) {
@@ -410,59 +426,9 @@ app.post('/login', (req, res) => {
   });
 });
 
-app.post('/api/checkExistingData', async (req, res) => {
-  const { academicYear, courseCode, courseType, section, instructorFirstName, instructorLastName } = req.body;
-
-  try {
-    const [existingData] = await queryPromise(dbRateMyCourse, `
-      SELECT * FROM courseofferings co
-      JOIN courses c ON co.courseid = c.courseid
-      JOIN instructors i ON co.instructorid = i.instructorid
-      WHERE co.academicyear = ?
-      AND c.coursecode = ?
-      AND co.semester = ?
-      AND co.section = ?
-      AND i.firstname = ?
-      AND i.lastname = ?
-    `, [academicYear, courseCode, courseType, section, instructorFirstName, instructorLastName]);
-
-    res.json({ exists: !!existingData });
-  } catch (error) {
-    console.error('Error checking existing data:', error);
-    res.status(500).json({ error: 'Database error' });
-  }
-});
-
-// Login route for database access (users table in 'mytables')
-app.post('/login-db', (req, res) => {
-  const { username, password } = req.body;
-
-  if (!username || !password) {
-    return res.status(400).json({ error: 'Please provide both username and password' });
-  }
-
-  const checkUserQuery = 'SELECT * FROM users WHERE username = ?';
-  dbMytables.query(checkUserQuery, [username], (error, results) => {
-    if (error) {
-      console.error('Database query error:', error);
-      return res.status(500).json({ error: 'Database error' });
-    }
-
-    if (results.length === 0) {
-      return res.status(404).json({ error: 'User does not exist' });
-    }
-
-    const user = results[0];
-    if (!bcrypt.compareSync(password, user.password)) {
-      return res.status(401).json({ error: 'Password incorrect' });
-    }
-
-    res.status(200).json({ message: 'Login successful' });
-  });
-});
-
 // Server start
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
+
