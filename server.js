@@ -27,13 +27,12 @@ const dbMytables = mysql.createConnection({
   connectTimeout: 10000
 });
 
-// MySQL connection for 'ratemycourse'
-const dbRateMyCourse = mysql.createConnection({
+const dbRateMyCourse = mysql.createPool({
   host: 'rm-2ze8y04111hiut0r60o.mysql.rds.aliyuncs.com',
   user: 'main',
   password: 'Woshishabi2004',
   database: 'ratemycourse',
-  connectTimeout: 10000
+  connectionLimit: 10
 });
 
 dbMytables.connect((err) => {
@@ -79,41 +78,48 @@ app.get('/api/all-data', async (req, res) => {
     let cachedData = await redis.get(cacheKey);
     if (cachedData) {
       console.log('Returning data from Redis cache');
-      res.json(JSON.parse(cachedData));
-    } else {
-      const coursesQuery = `
-        SELECT DISTINCT c.coursecode, c.coursename
-        FROM courses c
-        JOIN courseofferings co ON c.courseid = co.courseid
-        ORDER BY c.coursecode
-        LIMIT ? OFFSET ?
-      `;
-      const professorsQuery = `
-        SELECT DISTINCT i.firstname, i.lastname, d.DepartmentName AS department
-        FROM instructors i
-        JOIN courseofferings co ON i.instructorid = co.instructorid
-        JOIN courses c ON co.courseid = c.courseid
-        JOIN departments d ON c.departmentid = d.DepartmentID
-        ORDER BY i.lastname, i.firstname
-        LIMIT ? OFFSET ?
-      `;
-
-      const [courses, professors] = await Promise.all([
-        queryPromise(dbRateMyCourse, coursesQuery, [limit, offset]),
-        queryPromise(dbRateMyCourse, professorsQuery, [limit, offset])
-      ]);
-
-      const responseData = { courses, professors, page, limit };
-      await redis.set(cacheKey, JSON.stringify(responseData), { ex: 3600 });
-      res.json(responseData);
+      try {
+        const parsedData = JSON.parse(cachedData);
+        return res.json(parsedData);
+      } catch (parseError) {
+        console.error('Error parsing Redis data:', parseError);
+        // If parsing fails, we'll fetch fresh data from the database
+      }
     }
+
+    // Fetch data from database
+    const coursesQuery = `
+      SELECT DISTINCT c.coursecode, c.coursename
+      FROM courses c
+      JOIN courseofferings co ON c.courseid = co.courseid
+      ORDER BY c.coursecode
+      LIMIT ? OFFSET ?
+    `;
+    const professorsQuery = `
+      SELECT DISTINCT i.firstname, i.lastname, d.DepartmentName AS department
+      FROM instructors i
+      JOIN courseofferings co ON i.instructorid = co.instructorid
+      JOIN courses c ON co.courseid = c.courseid
+      JOIN departments d ON c.departmentid = d.DepartmentID
+      ORDER BY i.lastname, i.firstname
+      LIMIT ? OFFSET ?
+    `;
+
+    const [courses, professors] = await Promise.all([
+      queryPromise(dbRateMyCourse, coursesQuery, [limit, offset]),
+      queryPromise(dbRateMyCourse, professorsQuery, [limit, offset])
+    ]);
+
+    const responseData = { courses, professors, page, limit };
+
+    // Store stringified data in Redis
+    await redis.set(cacheKey, JSON.stringify(responseData), { ex: 3600 });
+    res.json(responseData);
   } catch (error) {
     console.error('Error fetching all data:', error);
     res.status(500).json({ error: 'Database error: ' + error.message });
   }
 });
-
-
 
 // Server-side Pagination for /api/search with Redis caching
 app.get('/api/search', async (req, res) => {
@@ -125,7 +131,13 @@ app.get('/api/search', async (req, res) => {
     let cachedData = await redis.get(cacheKey);
     if (cachedData) {
       console.log('Returning search results from Redis cache');
-      res.json(JSON.parse(cachedData));
+      try {
+        const parsedData = JSON.parse(cachedData);
+        return res.json(parsedData);
+      } catch (parseError) {
+        console.error('Error parsing Redis search data:', parseError);
+        // If parsing fails, we'll fetch fresh data from the database
+      }
     } else {
       let searchQuery;
       let queryParams;
@@ -320,6 +332,7 @@ app.get('/api/search', async (req, res) => {
   }
 });
 
+// Error handling middleware
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);
   res.status(500).json({ error: 'An unexpected error occurred' });
