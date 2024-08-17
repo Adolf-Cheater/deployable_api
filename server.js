@@ -3,36 +3,59 @@ const mysql = require('mysql');
 const bodyParser = require('body-parser');
 const bcrypt = require('bcryptjs');
 const cors = require('cors');
-const compression = require('compression');
+const levenshtein = require('fast-levenshtein');
+const spotDataUpload = require('./spotDataUpload');
 
 const app = express();
 app.use(bodyParser.json());
 app.use(cors());
-app.use(compression());
 
-// MySQL connection pools
-const dbConfig = {
+// MySQL connection for 'mytables'
+const dbMytables = mysql.createConnection({
   host: 'rm-2ze8y04111hiut0r60o.mysql.rds.aliyuncs.com',
   user: 'main',
   password: 'Woshishabi2004',
-  connectionLimit: 10
-};
-
-const dbMytables = mysql.createPool({
-  ...dbConfig,
-  database: 'mytables'
+  database: 'mytables',
+  connectTimeout: 10000
 });
 
-const dbRateMyCourse = mysql.createPool({
-  ...dbConfig,
-  database: 'ratemycourse'
+// MySQL connection for 'ratemycourse'
+const dbRateMyCourse = mysql.createConnection({
+  host: 'rm-2ze8y04111hiut0r60o.mysql.rds.aliyuncs.com', // same host
+  user: 'main', // same user
+  password: 'Woshishabi2004', // same password
+  database: 'ratemycourse',
+  connectTimeout: 10000
 });
 
+dbMytables.connect((err) => {
+  if (err) {
+    console.error('Database connection to mytables failed:', err.stack);
+    return;
+  }
+  console.log('Connected to mytables database.');
+
+  // Additional setup for mytables, if needed
+});
+
+dbRateMyCourse.connect((err) => {
+  if (err) {
+    console.error('Database connection to ratemycourse failed:', err.stack);
+    return;
+  }
+  console.log('Connected to ratemycourse database.');
+
+  // Additional setup for ratemycourse, if needed
+});
+
+// Define queryPromise function
 function queryPromise(db, sql, values) {
   return new Promise((resolve, reject) => {
     db.query(sql, values, (error, results) => {
       if (error) {
         console.error('SQL Error:', error);
+        console.error('SQL Query:', sql);
+        console.error('SQL Values:', values);
         return reject(error);
       }
       resolve(results);
@@ -40,45 +63,18 @@ function queryPromise(db, sql, values) {
   });
 }
 
-// Simple in-memory cache
-const cache = new Map();
-const CACHE_TTL = 300000; // 5 minutes
-
-function getCachedData(key) {
-  const cachedItem = cache.get(key);
-  if (cachedItem && Date.now() - cachedItem.timestamp < CACHE_TTL) {
-    return cachedItem.data;
-  }
-  return null;
-}
-
-function setCachedData(key, data) {
-  cache.set(key, { data, timestamp: Date.now() });
-}
-
+// Middleware for the root route
 app.get('/', (req, res) => {
   res.send('Server is running');
 });
 
 app.get('/api/all-data', async (req, res) => {
-  const page = parseInt(req.query.page) || 1;
-  const limit = parseInt(req.query.limit) || 50;
-  const offset = (page - 1) * limit;
-
-  const cacheKey = `all-data-${page}-${limit}`;
-  const cachedData = getCachedData(cacheKey);
-
-  if (cachedData) {
-    return res.json(cachedData);
-  }
-
   try {
     const coursesQuery = `
       SELECT DISTINCT c.coursecode, c.coursename
       FROM courses c
       JOIN courseofferings co ON c.courseid = co.courseid
       ORDER BY c.coursecode
-      LIMIT ? OFFSET ?
     `;
 
     const professorsQuery = `
@@ -88,17 +84,14 @@ app.get('/api/all-data', async (req, res) => {
       JOIN courses c ON co.courseid = c.courseid
       JOIN departments d ON c.departmentid = d.DepartmentID
       ORDER BY i.lastname, i.firstname
-      LIMIT ? OFFSET ?
     `;
 
     const [courses, professors] = await Promise.all([
-      queryPromise(dbRateMyCourse, coursesQuery, [limit, offset]),
-      queryPromise(dbRateMyCourse, professorsQuery, [limit, offset])
+      queryPromise(dbRateMyCourse, coursesQuery),
+      queryPromise(dbRateMyCourse, professorsQuery)
     ]);
 
-    const result = { courses, professors, page, limit };
-    setCachedData(cacheKey, result);
-    res.json(result);
+    res.json({ courses, professors });
   } catch (error) {
     console.error('Error fetching all data:', error);
     res.status(500).json({ error: 'Database error: ' + error.message });
@@ -106,20 +99,11 @@ app.get('/api/all-data', async (req, res) => {
 });
 
 app.get('/api/search', async (req, res) => {
-  const { query, type, page = 1, limit = 50 } = req.query;
-  const offset = (page - 1) * limit;
-
-  const cacheKey = `search-${type}-${query}-${page}-${limit}`;
-  const cachedData = getCachedData(cacheKey);
-
-  if (cachedData) {
-    return res.json(cachedData);
-  }
+  const { query, type } = req.query;
+  let searchQuery;
+  let queryParams;
 
   try {
-    let searchQuery;
-    let queryParams;
-
     console.log(`Received search query: ${query}, type: ${type}`);
 
     if (type === 'course') {
@@ -153,9 +137,8 @@ app.get('/api/search', async (req, res) => {
         LEFT JOIN spot_questions sq ON sr.ratingid = sq.ratingid
         LEFT JOIN courseofferdb offer ON CONCAT(offer.courseLetter, ' ', offer.courseNumber) = c.coursecode
         WHERE c.coursecode = ?
-        LIMIT ? OFFSET ?
       `;
-      queryParams = [query, parseInt(limit), parseInt(offset)];
+      queryParams = [query];
     } else if (type === 'professor') {
       const [lastName, firstName] = query.split(',').map(name => name.trim());
       searchQuery = `
@@ -188,9 +171,8 @@ app.get('/api/search', async (req, res) => {
         LEFT JOIN spot_questions sq ON sr.ratingid = sq.ratingid
         LEFT JOIN courseofferdb offer ON CONCAT(offer.courseLetter, ' ', offer.courseNumber) = c.coursecode
         WHERE i.lastname = ? AND i.firstname = ?
-        LIMIT ? OFFSET ?
       `;
-      queryParams = [lastName, firstName, parseInt(limit), parseInt(offset)];
+      queryParams = [lastName, firstName];
     } else {
       // General search
       const searchPattern = `%${query}%`;
@@ -228,9 +210,8 @@ app.get('/api/search', async (req, res) => {
         OR i.firstname LIKE ? 
         OR i.lastname LIKE ?
         OR CONCAT(i.firstname, ' ', i.lastname) LIKE ?
-        LIMIT ? OFFSET ?
       `;
-      queryParams = [searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, parseInt(limit), parseInt(offset)];
+      queryParams = [searchPattern, searchPattern, searchPattern, searchPattern, searchPattern];
     }
 
     let results = await queryPromise(dbRateMyCourse, searchQuery, queryParams);
@@ -282,7 +263,6 @@ app.get('/api/search', async (req, res) => {
         FROM crowdsourcedb
         WHERE courseNumber = ?
         AND professorNames LIKE CONCAT('%', ?, '%')
-        LIMIT 10
       `;
       const gpaResults = await queryPromise(dbRateMyCourse, gpaQuery, [
         result.coursecode,
@@ -291,7 +271,7 @@ app.get('/api/search', async (req, res) => {
       result.gpas = gpaResults;
     }
 
-    setCachedData(cacheKey, results);
+    console.log(`Search results for query "${query}":`, results);
     res.json(results);
   } catch (error) {
     console.error('Database query error:', error);
@@ -299,16 +279,23 @@ app.get('/api/search', async (req, res) => {
   }
 });
 
-app.post('/register', async (req, res) => {
+// Route handling for 'ratemycourse' related data
+app.use('/api', spotDataUpload(dbRateMyCourse));
+
+// Register route for main page (login_info table in 'mytables')
+app.post('/register', (req, res) => {
   const { username, password, dob, country } = req.body;
 
   if (!username || !password || !dob || !country) {
     return res.status(400).json({ error: 'Please provide all required fields' });
   }
 
-  try {
-    const checkUserQuery = 'SELECT * FROM login_info WHERE username = ?';
-    const results = await queryPromise(dbMytables, checkUserQuery, [username]);
+  const checkUserQuery = 'SELECT * FROM login_info WHERE username = ?';
+  dbMytables.query(checkUserQuery, [username], (error, results) => {
+    if (error) {
+      console.error('Database query error:', error);
+      return res.status(500).json({ error });
+    }
 
     if (results.length > 0) {
       return res.status(400).json({ error: 'User already exists' });
@@ -316,25 +303,31 @@ app.post('/register', async (req, res) => {
 
     const hashedPassword = bcrypt.hashSync(password, 10);
     const insertUserQuery = 'INSERT INTO login_info (username, password, dob, country) VALUES (?, ?, ?, ?)';
-    await queryPromise(dbMytables, insertUserQuery, [username, hashedPassword, dob, country]);
+    dbMytables.query(insertUserQuery, [username, hashedPassword, dob, country], (error, results) => {
+      if (error) {
+        console.error('Database query error:', error);
+        return res.status(500).json({ error: 'Database error' });
+      }
 
-    res.status(200).json({ message: 'Registration successful' });
-  } catch (error) {
-    console.error('Database query error:', error);
-    res.status(500).json({ error: 'Database error' });
-  }
+      res.status(200).json({ message: 'Registration successful' });
+    });
+  });
 });
 
-app.post('/register-db', async (req, res) => {
+// Register route for database access (users table in 'mytables')
+app.post('/register-db', (req, res) => {
   const { username, password } = req.body;
 
   if (!username || !password) {
     return res.status(400).json({ error: 'Please provide both username and password' });
   }
 
-  try {
-    const checkUserQuery = 'SELECT * FROM users WHERE username = ?';
-    const results = await queryPromise(dbMytables, checkUserQuery, [username]);
+  const checkUserQuery = 'SELECT * FROM users WHERE username = ?';
+  dbMytables.query(checkUserQuery, [username], (error, results) => {
+    if (error) {
+      console.error('Database query error:', error);
+      return res.status(500).json({ error });
+    }
 
     if (results.length > 0) {
       return res.status(400).json({ error: 'User already exists' });
@@ -342,25 +335,31 @@ app.post('/register-db', async (req, res) => {
 
     const hashedPassword = bcrypt.hashSync(password, 10);
     const insertUserQuery = 'INSERT INTO users (username, password) VALUES (?, ?)';
-    await queryPromise(dbMytables, insertUserQuery, [username, hashedPassword]);
+    dbMytables.query(insertUserQuery, [username, hashedPassword], (error, results) => {
+      if (error) {
+        console.error('Database query error:', error);
+        return res.status(500).json({ error: 'Database error' });
+      }
 
-    res.status(200).json({ message: 'Registration successful' });
-  } catch (error) {
-    console.error('Database query error:', error);
-    res.status(500).json({ error: 'Database error' });
-  }
+      res.status(200).json({ message: 'Registration successful' });
+    });
+  });
 });
 
-app.post('/login', async (req, res) => {
+// Login route for main page (login_info table in 'mytables')
+app.post('/login', (req, res) => {
   const { username, password } = req.body;
 
   if (!username || !password) {
     return res.status(400).json({ error: 'Please provide both username and password' });
   }
 
-  try {
-    const checkUserQuery = 'SELECT * FROM login_info WHERE username = ?';
-    const results = await queryPromise(dbMytables, checkUserQuery, [username]);
+  const checkUserQuery = 'SELECT * FROM login_info WHERE username = ?';
+  dbMytables.query(checkUserQuery, [username], (error, results) => {
+    if (error) {
+      console.error('Database query error:', error);
+      return res.status(500).json({ error: 'Database error' });
+    }
 
     if (results.length === 0) {
       return res.status(404).json({ error: 'User does not exist' });
@@ -372,10 +371,7 @@ app.post('/login', async (req, res) => {
     }
 
     res.status(200).json({ message: 'Login successful' });
-  } catch (error) {
-    console.error('Database query error:', error);
-    res.status(500).json({ error: 'Database error' });
-  }
+  });
 });
 
 app.post('/api/checkExistingData', async (req, res) => {
@@ -401,16 +397,20 @@ app.post('/api/checkExistingData', async (req, res) => {
   }
 });
 
-app.post('/login-db', async (req, res) => {
+// Login route for database access (users table in 'mytables')
+app.post('/login-db', (req, res) => {
   const { username, password } = req.body;
 
   if (!username || !password) {
     return res.status(400).json({ error: 'Please provide both username and password' });
   }
 
-  try {
-    const checkUserQuery = 'SELECT * FROM users WHERE username = ?';
-    const results = await queryPromise(dbMytables, checkUserQuery, [username]);
+  const checkUserQuery = 'SELECT * FROM users WHERE username = ?';
+  dbMytables.query(checkUserQuery, [username], (error, results) => {
+    if (error) {
+      console.error('Database query error:', error);
+      return res.status(500).json({ error: 'Database error' });
+    }
 
     if (results.length === 0) {
       return res.status(404).json({ error: 'User does not exist' });
@@ -422,55 +422,11 @@ app.post('/login-db', async (req, res) => {
     }
 
     res.status(200).json({ message: 'Login successful' });
-  } catch (error) {
-    console.error('Database query error:', error);
-    res.status(500).json({ error: 'Database error' });
-  }
-});
-
-// Error handling middleware
-app.use((err, req, res, next) => {
-  console.error('Unhandled error:', err);
-  res.status(500).json({ error: 'An unexpected error occurred' });
-});
-
-// Health check route
-app.get('/health', async (req, res) => {
-  try {
-    await Promise.all([
-      queryPromise(dbMytables, 'SELECT 1'),
-      queryPromise(dbRateMyCourse, 'SELECT 1')
-    ]);
-    res.status(200).json({ status: 'healthy' });
-  } catch (error) {
-    console.error('Health check failed:', error);
-    res.status(500).json({ status: 'unhealthy', error: error.message });
-  }
+  });
 });
 
 // Server start
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
-});
-
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('SIGTERM signal received: closing HTTP server');
-  dbMytables.end((err) => {
-    if (err) {
-      console.error('Error closing mytables database connection:', err);
-    }
-    console.log('Mytables database connection closed');
-  });
-  dbRateMyCourse.end((err) => {
-    if (err) {
-      console.error('Error closing ratemycourse database connection:', err);
-    }
-    console.log('Ratemycourse database connection closed');
-  });
-  server.close(() => {
-    console.log('HTTP server closed');
-    process.exit(0);
-  });
 });
