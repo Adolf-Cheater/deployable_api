@@ -134,7 +134,12 @@ app.get('/api/search', async (req, res) => {
 
     if (cachedData) {
       console.log('Returning search results from Redis cache');
-      return res.json(JSON.parse(cachedData));
+      // Ensure cached data is a string before parsing
+      if (typeof cachedData === 'string') {
+        return res.json(JSON.parse(cachedData));
+      } else {
+        return res.json(cachedData);
+      }
     } else {
       let searchQuery;
       let queryParams;
@@ -241,7 +246,7 @@ app.get('/api/search', async (req, res) => {
           JOIN departments d ON c.departmentid = d.DepartmentID
           LEFT JOIN spot_ratings sr ON co.offeringid = sr.offeringid
           LEFT JOIN spot_questions sq ON sr.ratingid = sq.ratingid
-                    LEFT JOIN courseofferdb offer ON CONCAT(offer.courseLetter, ' ', offer.courseNumber) = c.coursecode
+          LEFT JOIN courseofferdb offer ON CONCAT(offer.courseLetter, ' ', offer.courseNumber) = c.coursecode
           WHERE c.coursecode LIKE ? 
           OR c.coursename LIKE ? 
           OR i.firstname LIKE ? 
@@ -318,7 +323,9 @@ app.get('/api/search', async (req, res) => {
       }
 
       console.log(`Search results for query "${query}":`, results);
-      await redis.set(cacheKey, JSON.stringify(results), { ex: 3600 }); // Cache for 1 hour
+
+      // Explicitly stringify the results before storing in Redis
+      await redis.set(cacheKey, JSON.stringify(results), { ex: 3600 });
       res.json(results);
     }
   } catch (error) {
@@ -326,6 +333,7 @@ app.get('/api/search', async (req, res) => {
     res.status(500).json({ error: 'Database error: ' + error.message });
   }
 });
+
 
 // Route handling for 'ratemycourse' related data
 app.use('/api', spotDataUpload(dbRateMyCourse));
