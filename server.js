@@ -300,7 +300,6 @@ app.get('/api/search', async (req, res) => {
       `;
       const gpaResults = await queryPromise(dbRateMyCourse, gpaQuery, [
         result.coursecode,
-        result.department
         `${result.firstname} ${result.lastname}`
       ]);
       result.gpas = gpaResults;
