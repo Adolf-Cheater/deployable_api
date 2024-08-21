@@ -82,7 +82,7 @@ app.get('/api/course-gpa', async (req, res) => {
 
     // Query to fetch matching GPA entries from crowdsourcedb
     const gpaQuery = `
-      SELECT gpa, classSize, term, section
+      SELECT gpa, classSize, term, section, professornames
       FROM crowdsourcedb
       WHERE department = ?
       AND courseNumber = ?
@@ -300,6 +300,7 @@ app.get('/api/search', async (req, res) => {
       `;
       const gpaResults = await queryPromise(dbRateMyCourse, gpaQuery, [
         result.coursecode,
+        result.department
         `${result.firstname} ${result.lastname}`
       ]);
       result.gpas = gpaResults;
