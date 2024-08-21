@@ -82,7 +82,7 @@ app.get('/api/course-gpa', async (req, res) => {
 
     // Query to fetch matching GPA entries from crowdsourcedb
     const gpaQuery = `
-      SELECT gpa, classSize, term, section, professornames
+      SELECT gpa, classSize, term, section, professorNames
       FROM crowdsourcedb
       WHERE department = ?
       AND courseNumber = ?
