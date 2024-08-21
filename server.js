@@ -69,6 +69,39 @@ app.get('/', (req, res) => {
   res.send('Server is running');
 });
 
+app.get('/api/course-gpa', async (req, res) => {
+  const { courseCode } = req.query;
+
+  try {
+    // Split the course code to extract the department and course number
+    const [department, courseNumber] = courseCode.split(' ');
+
+    if (!department || !courseNumber) {
+      return res.status(400).json({ error: 'Invalid course code format.' });
+    }
+
+    // Query to fetch matching GPA entries from crowdsourcedb
+    const gpaQuery = `
+      SELECT gpa, classSize, term, section
+      FROM crowdsourcedb
+      WHERE department = ?
+      AND courseNumber = ?
+      ORDER BY term DESC, section
+    `;
+
+    const gpaResults = await queryPromise(dbRateMyCourse, gpaQuery, [department, courseNumber]);
+
+    if (gpaResults.length === 0) {
+      return res.status(404).json({ message: 'No GPA data found for this course.' });
+    }
+
+    res.json(gpaResults);
+  } catch (error) {
+    console.error('Error fetching GPA data:', error);
+    res.status(500).json({ error: 'Database error: ' + error.message });
+  }
+});
+
 app.get('/api/all-data', async (req, res) => {
   try {
     const coursesQuery = `
