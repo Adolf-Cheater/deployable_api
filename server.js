@@ -133,14 +133,15 @@ app.get('/api/all-data', async (req, res) => {
 });
 
 app.get('/api/search', async (req, res) => {
-  const { query, type, page = 1, limit = 10 } = req.query; // Default to page 1 and 10 items per page if not provided
+  const { query, type, page = 1, limit = 10 } = req.query;
   let searchQuery;
   let queryParams;
+  let countQuery;
 
   try {
     console.log(`Received search query: ${query}, type: ${type}, page: ${page}, limit: ${limit}`);
 
-    const offset = (page - 1) * limit; // Calculate the offset for pagination
+    const offset = (page - 1) * limit;
 
     if (type === 'course') {
       searchQuery = `
@@ -253,7 +254,14 @@ app.get('/api/search', async (req, res) => {
       queryParams = [searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, parseInt(limit), parseInt(offset)];
     }
 
-    let results = await queryPromise(dbRateMyCourse, searchQuery, queryParams);
+    // Add a COUNT query to get total number of results
+    countQuery = searchQuery.replace(/SELECT .*? FROM/, 'SELECT COUNT(DISTINCT co.offeringid) as total FROM');
+    countQuery = countQuery.split('LIMIT')[0]; // Remove LIMIT clause from count query
+
+    let [results, countResult] = await Promise.all([
+      queryPromise(dbRateMyCourse, searchQuery, queryParams),
+      queryPromise(dbRateMyCourse, countQuery, queryParams.slice(0, -2)) // Remove LIMIT and OFFSET params
+    ]);
 
     // Grouping results by offeringid
     results = results.reduce((acc, row) => {
@@ -310,11 +318,24 @@ app.get('/api/search', async (req, res) => {
       result.gpas = gpaResults;
     }
 
+    const totalResults = countResult[0].total;
+    const totalPages = Math.ceil(totalResults / limit);
+
     console.log(`Search results for query "${query}":`, results);
-    res.json(results);
+    res.json({
+      results: results,
+      page: parseInt(page),
+      limit: parseInt(limit),
+      totalResults: totalResults,
+      totalPages: totalPages
+    });
   } catch (error) {
     console.error('Database query error:', error);
-    res.status(500).json({ error: 'Database error: ' + error.message });
+    if (error.code === 'ER_NO_SUCH_TABLE') {
+      res.status(404).json({ error: 'Requested resource not found' });
+    } else {
+      res.status(500).json({ error: 'Database error: ' + error.message });
+    }
   }
 });
 
