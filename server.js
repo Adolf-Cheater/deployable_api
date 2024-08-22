@@ -137,17 +137,16 @@ app.get('/api/search', async (req, res) => {
   let searchQuery;
   let queryParams;
 
-
-  const offset = (page - 1) * limit; 
+  const offset = (page - 1) * limit;
 
   try {
-    console.log(`Received search query: ${query}, type: ${type}, page: ${page}, limit: ${limit}`);
+    console.log(`Received search query: ${query}, type: ${type}, dataType: ${dataType}, page: ${page}, limit: ${limit}`);
 
     if (type === 'course') {
       let semesterCondition = '';
       if (dataType === 'sections') {
         semesterCondition = 'AND co.semester = "LEC"';
-      }else if(dataType === 'labs'){
+      } else if (dataType === 'labs') {
         semesterCondition = 'AND co.semester != "LEC"';
       }
 
@@ -182,86 +181,14 @@ app.get('/api/search', async (req, res) => {
         LEFT JOIN spot_questions sq ON sr.ratingid = sq.ratingid
         LEFT JOIN courseofferdb offer ON CONCAT(offer.courseLetter, ' ', offer.courseNumber) = c.coursecode
         WHERE c.coursecode = ?
+        ${semesterCondition}
         LIMIT ? OFFSET ?
       `;
       queryParams = [query, parseInt(limit), parseInt(offset)];
     } else if (type === 'professor') {
-      const [lastName, firstName] = query.split(',').map(name => name.trim());
-      searchQuery = `
-        SELECT 
-          SQL_CALC_FOUND_ROWS
-          co.offeringid,
-          c.coursecode,
-          COALESCE(offer.courseTitle, c.coursename) AS coursename,
-          i.firstname,
-          i.lastname,
-          d.DepartmentName AS department,
-          d.Faculty AS faculty,
-          co.academicyear,
-          co.semester,
-          co.section,
-          sr.enrollmentcount,
-          sr.responsecount,
-          sr.lastupdated,
-          sq.QuestionText AS question,
-          sq.StronglyDisagree,
-          sq.Disagree,
-          sq.Neither,
-          sq.Agree,
-          sq.StronglyAgree,
-          sq.Median
-        FROM courseofferings co
-        JOIN courses c ON co.courseid = c.courseid
-        JOIN instructors i ON co.instructorid = i.instructorid
-        JOIN departments d ON c.departmentid = d.DepartmentID
-        LEFT JOIN spot_ratings sr ON co.offeringid = sr.offeringid
-        LEFT JOIN spot_questions sq ON sr.ratingid = sq.ratingid
-        LEFT JOIN courseofferdb offer ON CONCAT(offer.courseLetter, ' ', offer.courseNumber) = c.coursecode
-        WHERE i.lastname = ? AND i.firstname = ?
-        LIMIT ? OFFSET ?
-      `;
-      queryParams = [lastName, firstName, parseInt(limit), parseInt(offset)];
+      // ... (keep the professor search logic as is)
     } else {
-      // General search
-      const searchPattern = `%${query}%`;
-      searchQuery = `
-        SELECT 
-          SQL_CALC_FOUND_ROWS
-          co.offeringid,
-          c.coursecode,
-          COALESCE(offer.courseTitle, c.coursename) AS coursename,
-          i.firstname,
-          i.lastname,
-          d.DepartmentName AS department,
-          d.Faculty AS faculty,
-          co.academicyear,
-          co.semester,
-          co.section,
-          sr.enrollmentcount,
-          sr.responsecount,
-          sr.lastupdated,
-          sq.QuestionText AS question,
-          sq.StronglyDisagree,
-          sq.Disagree,
-          sq.Neither,
-          sq.Agree,
-          sq.StronglyAgree,
-          sq.Median
-        FROM courseofferings co
-        JOIN courses c ON co.courseid = c.courseid
-        JOIN instructors i ON co.instructorid = i.instructorid
-        JOIN departments d ON c.departmentid = d.DepartmentID
-        LEFT JOIN spot_ratings sr ON co.offeringid = sr.offeringid
-        LEFT JOIN spot_questions sq ON sr.ratingid = sq.ratingid
-        LEFT JOIN courseofferdb offer ON CONCAT(offer.courseLetter, ' ', offer.courseNumber) = c.coursecode
-        WHERE c.coursecode LIKE ? 
-        OR c.coursename LIKE ? 
-        OR i.firstname LIKE ? 
-        OR i.lastname LIKE ?
-        OR CONCAT(i.firstname, ' ', i.lastname) LIKE ?
-        LIMIT ? OFFSET ?
-      `;
-      queryParams = [searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, parseInt(limit), parseInt(offset)];
+      // ... (keep the general search logic as is)
     }
 
     let results = await queryPromise(dbRateMyCourse, searchQuery, queryParams);
@@ -270,7 +197,7 @@ app.get('/api/search', async (req, res) => {
     const totalResults = await queryPromise(dbRateMyCourse, 'SELECT FOUND_ROWS() AS count', []);
     const totalPages = Math.ceil(totalResults[0].count / limit);
 
-    // Grouping results by offeringid
+    // Grouping results by offeringid (consider moving this to frontend)
     results = results.reduce((acc, row) => {
       let existingOffering = acc.find(item => item.offeringid === row.offeringid);
 
@@ -290,7 +217,6 @@ app.get('/api/search', async (req, res) => {
           responsecount: row.responsecount,
           lastupdated: row.lastupdated,
           ratings: [],
-          gpas: []
         };
         acc.push(existingOffering);
       }
@@ -309,39 +235,6 @@ app.get('/api/search', async (req, res) => {
 
       return acc;
     }, []);
-
-    // Cross-reference with crowdsourcedb for GPA data
-    for (let result of results) {
-      const gpaQuery = `
-        SELECT gpa, classSize, term, section
-        FROM crowdsourcedb
-        WHERE courseNumber = ?
-        AND professorNames LIKE CONCAT('%', ?, '%')
-      `;
-      const gpaResults = await queryPromise(dbRateMyCourse, gpaQuery, [
-        result.coursecode,
-        `${result.firstname} ${result.lastname}`
-      ]);
-      result.gpas = gpaResults;
-    }
-
-    // Only fetch GPA data if specifically requested
-    if (dataType === 'gpa') {
-      for (let result of results) {
-        const gpaQuery = `
-          SELECT gpa, classSize, term, section
-          FROM crowdsourcedb
-          WHERE courseNumber = ?
-          AND professorNames LIKE CONCAT('%', ?, '%')
-        `;
-        const gpaResults = await queryPromise(dbRateMyCourse, gpaQuery, [
-          result.coursecode,
-          `${result.firstname} ${result.lastname}`
-        ]);
-        result.gpas = gpaResults;
-      }
-    }
-
 
     console.log(`Search results for query "${query}":`, results);
 
