@@ -133,12 +133,14 @@ app.get('/api/all-data', async (req, res) => {
 });
 
 app.get('/api/search', async (req, res) => {
-  const { query, type } = req.query;
+  const { query, type, page = 1, limit = 10 } = req.query; // Default to page 1 and 10 items per page if not provided
   let searchQuery;
   let queryParams;
 
   try {
-    console.log(`Received search query: ${query}, type: ${type}`);
+    console.log(`Received search query: ${query}, type: ${type}, page: ${page}, limit: ${limit}`);
+
+    const offset = (page - 1) * limit; // Calculate the offset for pagination
 
     if (type === 'course') {
       searchQuery = `
@@ -171,8 +173,9 @@ app.get('/api/search', async (req, res) => {
         LEFT JOIN spot_questions sq ON sr.ratingid = sq.ratingid
         LEFT JOIN courseofferdb offer ON CONCAT(offer.courseLetter, ' ', offer.courseNumber) = c.coursecode
         WHERE c.coursecode = ?
+        LIMIT ? OFFSET ?
       `;
-      queryParams = [query];
+      queryParams = [query, parseInt(limit), parseInt(offset)];
     } else if (type === 'professor') {
       const [lastName, firstName] = query.split(',').map(name => name.trim());
       searchQuery = `
@@ -205,8 +208,9 @@ app.get('/api/search', async (req, res) => {
         LEFT JOIN spot_questions sq ON sr.ratingid = sq.ratingid
         LEFT JOIN courseofferdb offer ON CONCAT(offer.courseLetter, ' ', offer.courseNumber) = c.coursecode
         WHERE i.lastname = ? AND i.firstname = ?
+        LIMIT ? OFFSET ?
       `;
-      queryParams = [lastName, firstName];
+      queryParams = [lastName, firstName, parseInt(limit), parseInt(offset)];
     } else {
       // General search
       const searchPattern = `%${query}%`;
@@ -244,8 +248,9 @@ app.get('/api/search', async (req, res) => {
         OR i.firstname LIKE ? 
         OR i.lastname LIKE ?
         OR CONCAT(i.firstname, ' ', i.lastname) LIKE ?
+        LIMIT ? OFFSET ?
       `;
-      queryParams = [searchPattern, searchPattern, searchPattern, searchPattern, searchPattern];
+      queryParams = [searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, parseInt(limit), parseInt(offset)];
     }
 
     let results = await queryPromise(dbRateMyCourse, searchQuery, queryParams);
