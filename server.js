@@ -133,15 +133,12 @@ app.get('/api/all-data', async (req, res) => {
 });
 
 app.get('/api/search', async (req, res) => {
-  const { query, type, page = 1, limit = 10 } = req.query;
+  const { query, type } = req.query;
   let searchQuery;
   let queryParams;
-  let countQuery;
 
   try {
-    console.log(`Received search query: ${query}, type: ${type}, page: ${page}, limit: ${limit}`);
-
-    const offset = (page - 1) * limit;
+    console.log(`Received search query: ${query}, type: ${type}`);
 
     if (type === 'course') {
       searchQuery = `
@@ -174,9 +171,8 @@ app.get('/api/search', async (req, res) => {
         LEFT JOIN spot_questions sq ON sr.ratingid = sq.ratingid
         LEFT JOIN courseofferdb offer ON CONCAT(offer.courseLetter, ' ', offer.courseNumber) = c.coursecode
         WHERE c.coursecode = ?
-        LIMIT ? OFFSET ?
       `;
-      queryParams = [query, parseInt(limit), parseInt(offset)];
+      queryParams = [query];
     } else if (type === 'professor') {
       const [lastName, firstName] = query.split(',').map(name => name.trim());
       searchQuery = `
@@ -209,9 +205,8 @@ app.get('/api/search', async (req, res) => {
         LEFT JOIN spot_questions sq ON sr.ratingid = sq.ratingid
         LEFT JOIN courseofferdb offer ON CONCAT(offer.courseLetter, ' ', offer.courseNumber) = c.coursecode
         WHERE i.lastname = ? AND i.firstname = ?
-        LIMIT ? OFFSET ?
       `;
-      queryParams = [lastName, firstName, parseInt(limit), parseInt(offset)];
+      queryParams = [lastName, firstName];
     } else {
       // General search
       const searchPattern = `%${query}%`;
@@ -249,19 +244,11 @@ app.get('/api/search', async (req, res) => {
         OR i.firstname LIKE ? 
         OR i.lastname LIKE ?
         OR CONCAT(i.firstname, ' ', i.lastname) LIKE ?
-        LIMIT ? OFFSET ?
       `;
-      queryParams = [searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, parseInt(limit), parseInt(offset)];
+      queryParams = [searchPattern, searchPattern, searchPattern, searchPattern, searchPattern];
     }
 
-    // Add a COUNT query to get total number of results
-    countQuery = searchQuery.replace(/SELECT .*? FROM/, 'SELECT COUNT(DISTINCT co.offeringid) as total FROM');
-    countQuery = countQuery.split('LIMIT')[0]; // Remove LIMIT clause from count query
-
-    let [results, countResult] = await Promise.all([
-      queryPromise(dbRateMyCourse, searchQuery, queryParams),
-      queryPromise(dbRateMyCourse, countQuery, queryParams.slice(0, -2)) // Remove LIMIT and OFFSET params
-    ]);
+    let results = await queryPromise(dbRateMyCourse, searchQuery, queryParams);
 
     // Grouping results by offeringid
     results = results.reduce((acc, row) => {
@@ -318,24 +305,11 @@ app.get('/api/search', async (req, res) => {
       result.gpas = gpaResults;
     }
 
-    const totalResults = countResult[0].total;
-    const totalPages = Math.ceil(totalResults / limit);
-
     console.log(`Search results for query "${query}":`, results);
-    res.json({
-      results: results,
-      page: parseInt(page),
-      limit: parseInt(limit),
-      totalResults: totalResults,
-      totalPages: totalPages
-    });
+    res.json(results);
   } catch (error) {
     console.error('Database query error:', error);
-    if (error.code === 'ER_NO_SUCH_TABLE') {
-      res.status(404).json({ error: 'Requested resource not found' });
-    } else {
-      res.status(500).json({ error: 'Database error: ' + error.message });
-    }
+    res.status(500).json({ error: 'Database error: ' + error.message });
   }
 });
 
