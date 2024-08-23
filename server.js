@@ -133,26 +133,16 @@ app.get('/api/all-data', async (req, res) => {
 });
 
 app.get('/api/search', async (req, res) => {
-  const { query, type, page = 1, limit = 10, dataType = 'sections' } = req.query;
+  const { query, type } = req.query;
   let searchQuery;
   let queryParams;
 
-  const offset = (page - 1) * limit;
-
   try {
-    console.log(`Received search query: ${query}, type: ${type}, dataType: ${dataType}, page: ${page}, limit: ${limit}`);
+    console.log(`Received search query: ${query}, type: ${type}`);
 
     if (type === 'course') {
-      let semesterCondition = '';
-      if (dataType === 'sections') {
-        semesterCondition = 'AND co.semester = "LEC"';
-      } else if (dataType === 'labs') {
-        semesterCondition = 'AND co.semester != "LEC"';
-      }
-
       searchQuery = `
         SELECT 
-          SQL_CALC_FOUND_ROWS
           co.offeringid,
           c.coursecode,
           COALESCE(offer.courseTitle, c.coursename) AS coursename,
@@ -165,94 +155,7 @@ app.get('/api/search', async (req, res) => {
           co.section,
           sr.enrollmentcount,
           sr.responsecount,
-          sr.lastupdated
-        FROM courseofferings co
-        JOIN courses c ON co.courseid = c.courseid
-        JOIN instructors i ON co.instructorid = i.instructorid
-        JOIN departments d ON c.departmentid = d.DepartmentID
-        LEFT JOIN spot_ratings sr ON co.offeringid = sr.offeringid
-        LEFT JOIN courseofferdb offer ON CONCAT(offer.courseLetter, ' ', offer.courseNumber) = c.coursecode
-        WHERE c.coursecode = ?
-        ${semesterCondition}
-        ORDER BY co.academicyear DESC, co.semester, co.section
-        LIMIT ? OFFSET ?
-      `;
-      queryParams = [query, parseInt(limit), parseInt(offset)];
-    } else if (type === 'professor') {
-      const [lastName, firstName] = query.split(',').map(name => name.trim());
-      searchQuery = `
-        SELECT 
-          SQL_CALC_FOUND_ROWS
-          co.offeringid,
-          c.coursecode,
-          COALESCE(offer.courseTitle, c.coursename) AS coursename,
-          i.firstname,
-          i.lastname,
-          d.DepartmentName AS department,
-          d.Faculty AS faculty,
-          co.academicyear,
-          co.semester,
-          co.section,
-          sr.enrollmentcount,
-          sr.responsecount,
-          sr.lastupdated
-        FROM courseofferings co
-        JOIN courses c ON co.courseid = c.courseid
-        JOIN instructors i ON co.instructorid = i.instructorid
-        JOIN departments d ON c.departmentid = d.DepartmentID
-        LEFT JOIN spot_ratings sr ON co.offeringid = sr.offeringid
-        LEFT JOIN courseofferdb offer ON CONCAT(offer.courseLetter, ' ', offer.courseNumber) = c.coursecode
-        WHERE i.lastname = ? AND i.firstname = ?
-        ORDER BY co.academicyear DESC, co.semester, c.coursecode
-        LIMIT ? OFFSET ?
-      `;
-      queryParams = [lastName, firstName, parseInt(limit), parseInt(offset)];
-    } else {
-      // General search
-      const searchPattern = `%${query}%`;
-      searchQuery = `
-        SELECT 
-          SQL_CALC_FOUND_ROWS
-          co.offeringid,
-          c.coursecode,
-          COALESCE(offer.courseTitle, c.coursename) AS coursename,
-          i.firstname,
-          i.lastname,
-          d.DepartmentName AS department,
-          d.Faculty AS faculty,
-          co.academicyear,
-          co.semester,
-          co.section,
-          sr.enrollmentcount,
-          sr.responsecount,
-          sr.lastupdated
-        FROM courseofferings co
-        JOIN courses c ON co.courseid = c.courseid
-        JOIN instructors i ON co.instructorid = i.instructorid
-        JOIN departments d ON c.departmentid = d.DepartmentID
-        LEFT JOIN spot_ratings sr ON co.offeringid = sr.offeringid
-        LEFT JOIN courseofferdb offer ON CONCAT(offer.courseLetter, ' ', offer.courseNumber) = c.coursecode
-        WHERE c.coursecode LIKE ? 
-        OR c.coursename LIKE ? 
-        OR i.firstname LIKE ? 
-        OR i.lastname LIKE ?
-        OR CONCAT(i.firstname, ' ', i.lastname) LIKE ?
-        ORDER BY co.academicyear DESC, co.semester, c.coursecode
-        LIMIT ? OFFSET ?
-      `;
-      queryParams = [searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, parseInt(limit), parseInt(offset)];
-    }
-
-    let results = await queryPromise(dbRateMyCourse, searchQuery, queryParams);
-
-    // Fetch the total count of records
-    const totalResults = await queryPromise(dbRateMyCourse, 'SELECT FOUND_ROWS() AS count', []);
-    const totalPages = Math.ceil(totalResults[0].count / limit);
-
-    // Fetch ratings for each offering
-    for (let offering of results) {
-      const ratingsQuery = `
-        SELECT 
+          sr.lastupdated,
           sq.QuestionText AS question,
           sq.StronglyDisagree,
           sq.Disagree,
@@ -260,78 +163,152 @@ app.get('/api/search', async (req, res) => {
           sq.Agree,
           sq.StronglyAgree,
           sq.Median
-        FROM spot_questions sq
-        JOIN spot_ratings sr ON sq.ratingid = sr.ratingid
-        WHERE sr.offeringid = ?
+        FROM courseofferings co
+        JOIN courses c ON co.courseid = c.courseid
+        JOIN instructors i ON co.instructorid = i.instructorid
+        JOIN departments d ON c.departmentid = d.DepartmentID
+        LEFT JOIN spot_ratings sr ON co.offeringid = sr.offeringid
+        LEFT JOIN spot_questions sq ON sr.ratingid = sq.ratingid
+        LEFT JOIN courseofferdb offer ON CONCAT(offer.courseLetter, ' ', offer.courseNumber) = c.coursecode
+        WHERE c.coursecode = ?
       `;
-      offering.ratings = await queryPromise(dbRateMyCourse, ratingsQuery, [offering.offeringid]);
+      queryParams = [query];
+    } else if (type === 'professor') {
+      const [lastName, firstName] = query.split(',').map(name => name.trim());
+      searchQuery = `
+        SELECT 
+          co.offeringid,
+          c.coursecode,
+          COALESCE(offer.courseTitle, c.coursename) AS coursename,
+          i.firstname,
+          i.lastname,
+          d.DepartmentName AS department,
+          d.Faculty AS faculty,
+          co.academicyear,
+          co.semester,
+          co.section,
+          sr.enrollmentcount,
+          sr.responsecount,
+          sr.lastupdated,
+          sq.QuestionText AS question,
+          sq.StronglyDisagree,
+          sq.Disagree,
+          sq.Neither,
+          sq.Agree,
+          sq.StronglyAgree,
+          sq.Median
+        FROM courseofferings co
+        JOIN courses c ON co.courseid = c.courseid
+        JOIN instructors i ON co.instructorid = i.instructorid
+        JOIN departments d ON c.departmentid = d.DepartmentID
+        LEFT JOIN spot_ratings sr ON co.offeringid = sr.offeringid
+        LEFT JOIN spot_questions sq ON sr.ratingid = sq.ratingid
+        LEFT JOIN courseofferdb offer ON CONCAT(offer.courseLetter, ' ', offer.courseNumber) = c.coursecode
+        WHERE i.lastname = ? AND i.firstname = ?
+      `;
+      queryParams = [lastName, firstName];
+    } else {
+      // General search
+      const searchPattern = `%${query}%`;
+      searchQuery = `
+        SELECT 
+          co.offeringid,
+          c.coursecode,
+          COALESCE(offer.courseTitle, c.coursename) AS coursename,
+          i.firstname,
+          i.lastname,
+          d.DepartmentName AS department,
+          d.Faculty AS faculty,
+          co.academicyear,
+          co.semester,
+          co.section,
+          sr.enrollmentcount,
+          sr.responsecount,
+          sr.lastupdated,
+          sq.QuestionText AS question,
+          sq.StronglyDisagree,
+          sq.Disagree,
+          sq.Neither,
+          sq.Agree,
+          sq.StronglyAgree,
+          sq.Median
+        FROM courseofferings co
+        JOIN courses c ON co.courseid = c.courseid
+        JOIN instructors i ON co.instructorid = i.instructorid
+        JOIN departments d ON c.departmentid = d.DepartmentID
+        LEFT JOIN spot_ratings sr ON co.offeringid = sr.offeringid
+        LEFT JOIN spot_questions sq ON sr.ratingid = sq.ratingid
+        LEFT JOIN courseofferdb offer ON CONCAT(offer.courseLetter, ' ', offer.courseNumber) = c.coursecode
+        WHERE c.coursecode LIKE ? 
+        OR c.coursename LIKE ? 
+        OR i.firstname LIKE ? 
+        OR i.lastname LIKE ?
+        OR CONCAT(i.firstname, ' ', i.lastname) LIKE ?
+      `;
+      queryParams = [searchPattern, searchPattern, searchPattern, searchPattern, searchPattern];
     }
 
-    // Fetch GPA data if requested
-    if (dataType === 'gpa' && type === 'course') {
-      const [department, courseNumber] = query.split(' ');
+    let results = await queryPromise(dbRateMyCourse, searchQuery, queryParams);
+
+    // Grouping results by offeringid
+    results = results.reduce((acc, row) => {
+      let existingOffering = acc.find(item => item.offeringid === row.offeringid);
+
+      if (!existingOffering) {
+        existingOffering = {
+          offeringid: row.offeringid,
+          coursecode: row.coursecode,
+          coursename: row.coursename,
+          firstname: row.firstname,
+          lastname: row.lastname,
+          department: row.department,
+          faculty: row.faculty,
+          academicyear: row.academicyear,
+          semester: row.semester,
+          section: row.section,
+          enrollmentcount: row.enrollmentcount,
+          responsecount: row.responsecount,
+          lastupdated: row.lastupdated,
+          ratings: [],
+          gpas: []
+        };
+        acc.push(existingOffering);
+      }
+
+      if (row.question) {
+        existingOffering.ratings.push({
+          question: row.question,
+          stronglydisagree: row.StronglyDisagree,
+          disagree: row.Disagree,
+          neither: row.Neither,
+          agree: row.Agree,
+          stronglyagree: row.StronglyAgree,
+          median: row.Median
+        });
+      }
+
+      return acc;
+    }, []);
+
+    // Cross-reference with crowdsourcedb for GPA data
+    for (let result of results) {
       const gpaQuery = `
-        SELECT gpa, classSize, term, section, professorNames
+        SELECT gpa, classSize, term, section
         FROM crowdsourcedb
-        WHERE department = ? AND courseNumber = ?
-        ORDER BY term DESC, section
-        LIMIT ? OFFSET ?
+        WHERE courseNumber = ?
+        AND professorNames LIKE CONCAT('%', ?, '%')
       `;
-      const gpaResults = await queryPromise(dbRateMyCourse, gpaQuery, [department, courseNumber, parseInt(limit), parseInt(offset)]);
-      results = gpaResults;
+      const gpaResults = await queryPromise(dbRateMyCourse, gpaQuery, [
+        result.coursecode,
+        `${result.firstname} ${result.lastname}`
+      ]);
+      result.gpas = gpaResults;
     }
 
     console.log(`Search results for query "${query}":`, results);
-
-    res.json({
-      results,
-      pagination: {
-        totalResults: totalResults[0].count,
-        totalPages: totalPages,
-        currentPage: parseInt(page)
-      }
-    });
+    res.json(results);
   } catch (error) {
     console.error('Database query error:', error);
-    res.status(500).json({ error: 'Database error: ' + error.message });
-  }
-});
-
-
-app.get('/api/course-gpa', async (req, res) => {
-  const { courseCode, page = 1, limit = 10 } = req.query;
-
-  try {
-    const offset = (page - 1) * limit;
-
-    const gpaQuery = `
-      SELECT SQL_CALC_FOUND_ROWS gpa, classSize, term, section, professorNames
-      FROM crowdsourcedb
-      WHERE CONCAT(department, ' ', courseNumber) = ?
-      ORDER BY term DESC, section
-      LIMIT ? OFFSET ?
-    `;
-
-    const gpaResults = await queryPromise(dbRateMyCourse, gpaQuery, [courseCode, parseInt(limit), parseInt(offset)]);
-
-    // Fetch the total count of records
-    const totalResults = await queryPromise(dbRateMyCourse, 'SELECT FOUND_ROWS() AS count', []);
-    const totalPages = Math.ceil(totalResults[0].count / limit);
-
-    if (gpaResults.length === 0) {
-      return res.status(404).json({ message: 'No GPA data found for this course.' });
-    }
-
-    res.json({
-      results: gpaResults,
-      pagination: {
-        totalResults: totalResults[0].count,
-        totalPages: totalPages,
-        currentPage: parseInt(page)
-      }
-    });
-  } catch (error) {
-    console.error('Error fetching GPA data:', error);
     res.status(500).json({ error: 'Database error: ' + error.message });
   }
 });
