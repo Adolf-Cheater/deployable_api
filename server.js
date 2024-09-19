@@ -47,7 +47,7 @@ app.get('/health', (req, res) => {
 
 
 // Fetch all courses from coursesdb and link them to requirements
-app.get('/api/coursereq/courses', async (req, res) => {
+app.get('/api/courses', async (req, res) => {
   const client = await pool.connect();
   try {
     // Fetch all courses from coursesdb
@@ -103,7 +103,7 @@ app.get('/api/coursereq/courses', async (req, res) => {
 });
 
 // Search courses and link to requirements
-app.get('/api/coursereq/search', async (req, res) => {
+app.get('/api/search', async (req, res) => {
   const { query } = req.query;
   const client = await pool.connect();
 
