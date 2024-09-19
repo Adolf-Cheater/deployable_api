@@ -8,16 +8,7 @@ const app = express();
 // Use body-parser middleware to parse JSON bodies
 app.use(bodyParser.json());
 
-const cors = require('cors');
-const express = require('express');
-
-
-// Allow all origins
-app.use(cors({
-  origin: '*',  // Allow any origin
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],  // Allowed HTTP methods
-  allowedHeaders: ['Content-Type', 'Authorization'],  // Allowed headers
-}));
+app.use(cors());
 
 // Configure PostgreSQL connection
 const pool = new Pool({
@@ -31,14 +22,15 @@ const pool = new Pool({
   }
 });
 
-// Pool for the 'coursereq' database
 const poolCourseReq = new Pool({
-  user: 'koyeb-adm',
-  host: 'ep-young-surf-a4qcc6sw.us-east-1.pg.koyeb.app',
+  user: 'main',
+  host: 'general-usuage.chkscywoifga.us-east-2.rds.amazonaws.com',
   database: 'coursereq',
-  password: 'Bevl2dxq0YRF',
+  password: 'Woshishabi2004!',
   port: 5432,
-  ssl: { rejectUnauthorized: false }
+  ssl: {
+    rejectUnauthorized: false  // Ensure SSL is properly configured
+  }
 });
 
 
@@ -53,6 +45,116 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'OK', message: 'Server is running' });
 });
 
+
+// Fetch courses and link them to their requirements
+app.get('/api/coursereq/courses', async (req, res) => {
+  const client = await poolCourseReq.connect();
+  try {
+    // Fetch all courses from coursesdb
+    const coursesResult = await client.query(`
+      SELECT course_letter, course_number, course_title 
+      FROM coursesdb
+    `);
+    
+    const courses = coursesResult.rows;
+    
+    // Fetch requirements and link them to courses
+    const linkedResults = await Promise.all(courses.map(async (course) => {
+      const courseKey = `${course.course_letter}${course.course_number}`;
+
+      // Check if the course is in any of the requirements tables
+      const jrReq = await client.query(`
+        SELECT * FROM jrreq WHERE course_letter = $1 AND course_number = $2
+      `, [course.course_letter, course.course_number]);
+
+      const majorReq = await client.query(`
+        SELECT * FROM majoreq WHERE course_letter = $1 AND course_number = $2
+      `, [course.course_letter, course.course_number]);
+
+      const minorReq = await client.query(`
+        SELECT * FROM minoreq WHERE course_letter = $1 AND course_number = $2
+      `, [course.course_letter, course.course_number]);
+
+      const artsReq = await client.query(`
+        SELECT * FROM artsreq WHERE course_letter = $1 AND course_number = $2
+      `, [course.course_letter, course.course_number]);
+
+      return {
+        course,
+        requirements: {
+          juniorCore: jrReq.rows.length > 0,
+          major: majorReq.rows.length > 0,
+          minor: minorReq.rows.length > 0,
+          artsOption: artsReq.rows.length > 0,
+        }
+      };
+    }));
+
+    res.json(linkedResults);
+  } catch (err) {
+    console.error('Error fetching courses and requirements:', err);
+    res.status(500).json({ error: 'Failed to fetch courses and requirements' });
+  } finally {
+    client.release();
+  }
+});
+
+// Search courses and link to requirements
+app.get('/api/coursereq/search', async (req, res) => {
+  const { query } = req.query;
+  const client = await poolCourseReq.connect();
+
+  try {
+    const searchPattern = `%${query}%`;
+
+    // Search for matching courses in 'coursesdb'
+    const searchQuery = `
+      SELECT course_letter, course_number, course_title 
+      FROM coursesdb
+      WHERE course_letter ILIKE $1 OR course_number ILIKE $1 OR course_title ILIKE $1
+      LIMIT 10
+    `;
+    
+    const coursesResult = await client.query(searchQuery, [searchPattern]);
+    const courses = coursesResult.rows;
+
+    // For each course, check if it's linked to requirements in 'jrreq', 'majoreq', 'minoreq', 'artsreq'
+    const searchResults = await Promise.all(courses.map(async (course) => {
+      const jrReq = await client.query(`
+        SELECT * FROM jrreq WHERE course_letter = $1 AND course_number = $2
+      `, [course.course_letter, course.course_number]);
+
+      const majorReq = await client.query(`
+        SELECT * FROM majoreq WHERE course_letter = $1 AND course_number = $2
+      `, [course.course_letter, course.course_number]);
+
+      const minorReq = await client.query(`
+        SELECT * FROM minoreq WHERE course_letter = $1 AND course_number = $2
+      `, [course.course_letter, course.course_number]);
+
+      const artsReq = await client.query(`
+        SELECT * FROM artsreq WHERE course_letter = $1 AND course_number = $2
+      `, [course.course_letter, course.course_number]);
+
+      return {
+        course,
+        requirements: {
+          juniorCore: jrReq.rows.length > 0,
+          major: majorReq.rows.length > 0,
+          minor: minorReq.rows.length > 0,
+          artsOption: artsReq.rows.length > 0,
+        }
+      };
+    }));
+
+    res.json(searchResults);
+  } catch (error) {
+    console.error('Error searching courses and requirements:', error);
+    res.status(500).json({ error: 'An error occurred while searching.' });
+  } finally {
+    client.release();
+  }
+});
 
 
 // Data upload endpoint
@@ -195,19 +297,6 @@ async function processUpload(client, data) {
   }
 }
 
-// Route to fetch courses from the 'coursereq' database
-app.get('/api/coursereq/courses', async (req, res) => {
-  const client = await poolCourseReq.connect();
-  try {
-    const result = await client.query('SELECT course_letter, course_number, course_title FROM coursesdb');
-    res.json(result.rows);
-  } catch (err) {
-    console.error('Error fetching courses from coursereq:', err);
-    res.status(500).json({ error: 'Failed to fetch courses' });
-  } finally {
-    client.release();
-  }
-});
 
 
 // New retrieval endpoint for searching by course code or professor name
