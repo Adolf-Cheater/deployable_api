@@ -46,6 +46,19 @@ app.get('/health', (req, res) => {
 });
 
 
+app.get('/api/test-db', async (req, res) => {
+  try {
+    const client = await poolCourseReq.connect();
+    await client.query('SELECT 1');
+    client.release();
+    res.json({ message: 'Database connection successful' });
+  } catch (error) {
+    console.error('Database connection error:', error);
+    res.status(500).json({ error: 'Database connection failed' });
+  }
+});
+
+
 // Fetch all courses from coursesdb and link them to requirements
 app.get('/api/coursereq/courses', async (req, res) => {
   const client = await poolCourseReq.connect();
