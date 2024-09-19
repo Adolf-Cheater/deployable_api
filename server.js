@@ -8,7 +8,16 @@ const app = express();
 // Use body-parser middleware to parse JSON bodies
 app.use(bodyParser.json());
 
-app.use(cors());
+const cors = require('cors');
+const express = require('express');
+
+
+// Allow all origins
+app.use(cors({
+  origin: '*',  // Allow any origin
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],  // Allowed HTTP methods
+  allowedHeaders: ['Content-Type', 'Authorization'],  // Allowed headers
+}));
 
 // Configure PostgreSQL connection
 const pool = new Pool({
