@@ -46,27 +46,54 @@ app.get('/health', (req, res) => {
 });
 
 
+// Fetch all courses from coursesdb and link them to requirements
 app.get('/api/coursereq/courses', async (req, res) => {
-  const client = await poolCourseReq.connect();
+  const client = await pool.connect();
   try {
-    // Query to fetch all courses and link to requirements
-    const result = await client.query(`
-      SELECT 
-        c.course_letter, 
-        c.course_number, 
-        c.course_title,
-        CASE WHEN jr.course_letter IS NOT NULL THEN TRUE ELSE FALSE END AS juniorCore,
-        CASE WHEN major.course_letter IS NOT NULL THEN TRUE ELSE FALSE END AS major,
-        CASE WHEN minor.course_letter IS NOT NULL THEN TRUE ELSE FALSE END AS minor,
-        CASE WHEN arts.course_letter IS NOT NULL THEN TRUE ELSE FALSE END AS artsOption
-      FROM coursesdb c
-      LEFT JOIN jrreq jr ON c.course_letter = jr.course_letter AND c.course_number = jr.course_number
-      LEFT JOIN majoreq major ON c.course_letter = major.course_letter AND c.course_number = major.course_number
-      LEFT JOIN minoreq minor ON c.course_letter = minor.course_letter AND c.course_number = minor.course_number
-      LEFT JOIN artsreq arts ON c.course_letter = arts.course_letter AND c.course_number = arts.course_number;
+    // Fetch all courses from coursesdb
+    const coursesResult = await client.query(`
+      SELECT course_letter, course_number, course_title, units 
+      FROM coursesdb
     `);
 
-    res.json(result.rows);
+    const courses = coursesResult.rows;
+
+    // Link courses to their respective requirements (jrreq, majorreq, etc.)
+    const linkedResults = await Promise.all(
+      courses.map(async (course) => {
+        const jrReq = await client.query(
+          `SELECT * FROM jrreq WHERE course_letter = $1 AND course_number = $2`,
+          [course.course_letter, course.course_number]
+        );
+
+        const majorReq = await client.query(
+          `SELECT * FROM sciencemajorreq WHERE course_letter = $1 AND course_number = $2`,
+          [course.course_letter, course.course_number]
+        );
+
+        const minorReq = await client.query(
+          `SELECT * FROM scienceminorreq WHERE course_letter = $1 AND course_number = $2`,
+          [course.course_letter, course.course_number]
+        );
+
+        const artsReq = await client.query(
+          `SELECT * FROM artsoptionreq WHERE course_letter = $1 AND course_number = $2`,
+          [course.course_letter, course.course_number]
+        );
+
+        return {
+          course,
+          requirements: {
+            juniorCore: jrReq.rows.length > 0,
+            major: majorReq.rows.length > 0,
+            minor: minorReq.rows.length > 0,
+            artsOption: artsReq.rows.length > 0,
+          },
+        };
+      })
+    );
+
+    res.json(linkedResults);
   } catch (err) {
     console.error('Error fetching courses and requirements:', err);
     res.status(500).json({ error: 'Failed to fetch courses and requirements' });
@@ -78,50 +105,56 @@ app.get('/api/coursereq/courses', async (req, res) => {
 // Search courses and link to requirements
 app.get('/api/coursereq/search', async (req, res) => {
   const { query } = req.query;
-  const client = await poolCourseReq.connect();
+  const client = await pool.connect();
 
   try {
     const searchPattern = `%${query}%`;
 
     // Search for matching courses in 'coursesdb'
     const searchQuery = `
-      SELECT course_letter, course_number, course_title 
+      SELECT course_letter, course_number, course_title, units 
       FROM coursesdb
       WHERE course_letter ILIKE $1 OR course_number ILIKE $1 OR course_title ILIKE $1
       LIMIT 10
     `;
-    
+
     const coursesResult = await client.query(searchQuery, [searchPattern]);
     const courses = coursesResult.rows;
 
-    // For each course, check if it's linked to requirements in 'jrreq', 'majoreq', 'minoreq', 'artsreq'
-    const searchResults = await Promise.all(courses.map(async (course) => {
-      const jrReq = await client.query(`
-        SELECT * FROM jrreq WHERE course_letter = $1 AND course_number = $2
-      `, [course.course_letter, course.course_number]);
+    // For each course, check if it's linked to requirements
+    const searchResults = await Promise.all(
+      courses.map(async (course) => {
+        const jrReq = await client.query(
+          `SELECT * FROM jrreq WHERE course_letter = $1 AND course_number = $2`,
+          [course.course_letter, course.course_number]
+        );
 
-      const majorReq = await client.query(`
-        SELECT * FROM majoreq WHERE course_letter = $1 AND course_number = $2
-      `, [course.course_letter, course.course_number]);
+        const majorReq = await client.query(
+          `SELECT * FROM sciencemajorreq WHERE course_letter = $1 AND course_number = $2`,
+          [course.course_letter, course.course_number]
+        );
 
-      const minorReq = await client.query(`
-        SELECT * FROM minoreq WHERE course_letter = $1 AND course_number = $2
-      `, [course.course_letter, course.course_number]);
+        const minorReq = await client.query(
+          `SELECT * FROM scienceminorreq WHERE course_letter = $1 AND course_number = $2`,
+          [course.course_letter, course.course_number]
+        );
 
-      const artsReq = await client.query(`
-        SELECT * FROM artsreq WHERE course_letter = $1 AND course_number = $2
-      `, [course.course_letter, course.course_number]);
+        const artsReq = await client.query(
+          `SELECT * FROM artsoptionreq WHERE course_letter = $1 AND course_number = $2`,
+          [course.course_letter, course.course_number]
+        );
 
-      return {
-        course,
-        requirements: {
-          juniorCore: jrReq.rows.length > 0,
-          major: majorReq.rows.length > 0,
-          minor: minorReq.rows.length > 0,
-          artsOption: artsReq.rows.length > 0,
-        }
-      };
-    }));
+        return {
+          course,
+          requirements: {
+            juniorCore: jrReq.rows.length > 0,
+            major: majorReq.rows.length > 0,
+            minor: minorReq.rows.length > 0,
+            artsOption: artsReq.rows.length > 0,
+          },
+        };
+      })
+    );
 
     res.json(searchResults);
   } catch (error) {
