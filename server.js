@@ -1,3 +1,12 @@
+import { OpenAI } from 'openai';
+import { Pinecone } from 'pinecone-client';
+import dotenv from 'dotenv';
+
+dotenv.config();
+
+const pc = new Pinecone();
+const index = pc.Index("bearpath");
+
 const express = require('express');
 const { Pool } = require('pg');
 const cors = require('cors');
@@ -34,7 +43,6 @@ const poolCourseReq = new Pool({
 });
 
 
-
 // Root route for basic health check
 app.get('/', (req, res) => {
   res.send('Server is running');
@@ -45,68 +53,112 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'OK', message: 'Server is running' });
 });
 
+app.get('/api/query', async (req, res) => {
+  const { question } = req.query;
+  
+  if (!question) {
+    return res.status(400).json({ error: 'Question is required' });
+  }
 
-app.get('/api/test-db', async (req, res) => {
   try {
-    const client = await poolCourseReq.connect();
-    await client.query('SELECT 1');
-    client.release();
-    res.json({ message: 'Database connection successful' });
+    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    
+    // Get embedding for the question
+    const embeddingResponse = await client.embeddings.create({
+      model: "text-embedding-ada-002",
+      input: question,
+    });
+    const questionEmbedding = embeddingResponse.data[0].embedding;
+
+    // Query Pinecone
+    const queryResponse = await index.query({
+      vector: questionEmbedding,
+      topK: 5,
+      includeMetadata: true
+    });
+
+    // Format context from Pinecone results
+    let context = "";
+    for (let match of queryResponse.matches) {
+      if (match.metadata.type === 'gpa') {
+        context += `Course: ${match.metadata.department} ${match.metadata.courseNumber}, `
+          + `Professor: ${match.metadata.professorNames}, `
+          + `Term: ${match.metadata.term}, `
+          + `Section: ${match.metadata.section}, `
+          + `GPA: ${match.metadata.gpa}, `
+          + `Class Size: ${match.metadata.classSize}\n\n`;
+      } else if (match.metadata.type === 'course') {
+        context += `Course: ${match.metadata.courseLetter} ${match.metadata.courseNumber}, `
+          + `Title: ${match.metadata.courseTitle}, `
+          + `Units: ${match.metadata.Units}, `
+          + `Description: ${match.metadata.courseDescription}, `
+          + `Faculty: ${match.metadata.facultyName}\n\n`;
+      }
+    }
+
+    // Query the fine-tuned model
+    const chatCompletion = await client.chat.completions.create({
+      model: "ft:gpt-4o-mini-2024-07-18:personal::AHmNGvuH", // Your fine-tuned model
+      messages: [
+        {
+          role: "system",
+          content: "You are a knowledgeable and helpful course advisor assistant for RateMyCourse. You provide information about courses, professors, and GPAs based on the data available."
+        },
+        {
+          role: "user",
+          content: `Based on the following course information:\n\n${context}\n\nUser question: ${question}\n\nPlease provide a helpful response:`
+        }
+      ],
+    });
+
+    const answer = chatCompletion.choices[0].message.content;
+
+    res.json({ answer });
   } catch (error) {
-    console.error('Database connection error:', error);
-    res.status(500).json({ error: 'Database connection failed' });
+    console.error('Error processing query:', error);
+    res.status(500).json({ error: 'An error occurred while processing your query' });
   }
 });
 
-
-// Fetch all courses from coursesdb and link them to requirements
 app.get('/api/coursereq/courses', async (req, res) => {
   const client = await poolCourseReq.connect();
   try {
-    // Fetch all courses from coursesdb
-    const coursesResult = await client.query(`
-      SELECT course_letter, course_number, course_title, units 
-      FROM coursesdb
-    `);
+    // Fetch all courses from coursesdb with their requirements
+    const coursesQuery = `
+      SELECT 
+        c.course_letter, 
+        c.course_number, 
+        c.course_title, 
+        c.units,
+        CASE WHEN jr.course_letter IS NOT NULL THEN TRUE ELSE FALSE END AS junior_core,
+        CASE WHEN sm.course_letter IS NOT NULL THEN TRUE ELSE FALSE END AS major,
+        CASE WHEN smi.course_letter IS NOT NULL THEN TRUE ELSE FALSE END AS minor,
+        CASE WHEN ao.course_letter IS NOT NULL THEN TRUE ELSE FALSE END AS arts_option
+      FROM 
+        coursesdb c
+      LEFT JOIN jrreq jr ON c.course_letter = jr.course_letter AND c.course_number = jr.course_number
+      LEFT JOIN sciencemajorreq sm ON c.course_letter = sm.course_letter AND c.course_number = sm.course_number
+      LEFT JOIN scienceminorreq smi ON c.course_letter = smi.course_letter AND c.course_number = smi.course_number
+      LEFT JOIN artsoptionreq ao ON c.course_letter = ao.course_letter AND c.course_number = ao.course_number
+    `;
 
-    const courses = coursesResult.rows;
+    const coursesResult = await client.query(coursesQuery);
+    const courses = coursesResult.rows.map(row => ({
+      course: {
+        course_letter: row.course_letter,
+        course_number: row.course_number,
+        course_title: row.course_title,
+        units: row.units
+      },
+      requirements: {
+        juniorCore: row.junior_core,
+        major: row.major,
+        minor: row.minor,
+        artsOption: row.arts_option
+      }
+    }));
 
-    // Link courses to their respective requirements (jrreq, majorreq, etc.)
-    const linkedResults = await Promise.all(
-      courses.map(async (course) => {
-        const jrReq = await client.query(
-          `SELECT * FROM jrreq WHERE course_letter = $1 AND course_number = $2`,
-          [course.course_letter, course.course_number]
-        );
-
-        const majorReq = await client.query(
-          `SELECT * FROM sciencemajorreq WHERE course_letter = $1 AND course_number = $2`,
-          [course.course_letter, course.course_number]
-        );
-
-        const minorReq = await client.query(
-          `SELECT * FROM scienceminorreq WHERE course_letter = $1 AND course_number = $2`,
-          [course.course_letter, course.course_number]
-        );
-
-        const artsReq = await client.query(
-          `SELECT * FROM artsoptionreq WHERE course_letter = $1 AND course_number = $2`,
-          [course.course_letter, course.course_number]
-        );
-
-        return {
-          course,
-          requirements: {
-            juniorCore: jrReq.rows.length > 0,
-            major: majorReq.rows.length > 0,
-            minor: minorReq.rows.length > 0,
-            artsOption: artsReq.rows.length > 0,
-          },
-        };
-      })
-    );
-
-    res.json(linkedResults);
+    res.json(courses);
   } catch (err) {
     console.error('Error fetching courses and requirements:', err);
     res.status(500).json({ error: 'Failed to fetch courses and requirements' });
@@ -115,7 +167,7 @@ app.get('/api/coursereq/courses', async (req, res) => {
   }
 });
 
-// Search courses and link to requirements
+
 app.get('/api/coursereq/search', async (req, res) => {
   const { query } = req.query;
   const client = await poolCourseReq.connect();
@@ -123,61 +175,161 @@ app.get('/api/coursereq/search', async (req, res) => {
   try {
     const searchPattern = `%${query}%`;
 
-    // Search for matching courses in 'coursesdb'
+    // Search for matching courses in coursesdb
     const searchQuery = `
-      SELECT course_letter, course_number, course_title, units 
-      FROM coursesdb
-      WHERE course_letter ILIKE $1 OR course_number ILIKE $1 OR course_title ILIKE $1
+      SELECT 
+        course_letter, 
+        course_number, 
+        course_title, 
+        units 
+      FROM 
+        coursesdb
+      WHERE 
+        LOWER(CONCAT(course_letter, ' ', course_number)) LIKE LOWER($1)
+        OR LOWER(course_title) LIKE LOWER($1)
       LIMIT 10
     `;
 
     const coursesResult = await client.query(searchQuery, [searchPattern]);
-    const courses = coursesResult.rows;
+    const courses = coursesResult.rows.map(row => ({
+      course_code: `${row.course_letter} ${row.course_number}`,
+      course_name: row.course_title
+    }));
 
-    // For each course, check if it's linked to requirements
-    const searchResults = await Promise.all(
-      courses.map(async (course) => {
-        const jrReq = await client.query(
-          `SELECT * FROM jrreq WHERE course_letter = $1 AND course_number = $2`,
-          [course.course_letter, course.course_number]
-        );
-
-        const majorReq = await client.query(
-          `SELECT * FROM sciencemajorreq WHERE course_letter = $1 AND course_number = $2`,
-          [course.course_letter, course.course_number]
-        );
-
-        const minorReq = await client.query(
-          `SELECT * FROM scienceminorreq WHERE course_letter = $1 AND course_number = $2`,
-          [course.course_letter, course.course_number]
-        );
-
-        const artsReq = await client.query(
-          `SELECT * FROM artsoptionreq WHERE course_letter = $1 AND course_number = $2`,
-          [course.course_letter, course.course_number]
-        );
-
-        return {
-          course,
-          requirements: {
-            juniorCore: jrReq.rows.length > 0,
-            major: majorReq.rows.length > 0,
-            minor: minorReq.rows.length > 0,
-            artsOption: artsReq.rows.length > 0,
-          },
-        };
-      })
-    );
-
-    res.json(searchResults);
+    res.json({ courses });
   } catch (error) {
-    console.error('Error searching courses and requirements:', error);
+    console.error('Error searching courses:', error);
     res.status(500).json({ error: 'An error occurred while searching.' });
   } finally {
     client.release();
   }
 });
 
+app.get('/api/requirements/:major', async (req, res) => {
+  const { major } = req.params;
+  const client = await poolCourseReq.connect();
+  try {
+    const facultyReqQuery = 'SELECT * FROM FacultyRequirements WHERE faculty_name = $1';
+    const majorReqQuery = 'SELECT * FROM ScienceMajorReq WHERE major_name = $1';
+    
+    const [facultyReq, majorReq] = await Promise.all([
+      client.query(facultyReqQuery, ['Science']),
+      client.query(majorReqQuery, [major])
+    ]);
+
+    // Group major requirements by level_group
+    const groupedMajorReq = majorReq.rows.reduce((acc, req) => {
+      if (!acc[req.level_group]) {
+        acc[req.level_group] = [];
+      }
+      acc[req.level_group].push({
+        course_letter: req.course_letter,
+        course_number: req.course_number,
+        course_group: req.course_group,
+        completed: false // Initialize as not completed
+      });
+      return acc;
+    }, {});
+
+    res.json({
+      facultyRequirements: facultyReq.rows[0],
+      majorRequirements: groupedMajorReq
+    });
+  } catch (error) {
+    console.error('Error fetching major requirements:', error);
+    res.status(500).json({ error: 'An error occurred while fetching requirements' });
+  } finally {
+    client.release();
+  }
+});
+
+app.get('/api/science-faculty-requirements', async (req, res) => {
+  const client = await poolCourseReq.connect();
+  try {
+    const facultyReqQuery = 'SELECT * FROM FacultyRequirements WHERE faculty_name = $1';
+    
+    const facultyReq = await client.query(facultyReqQuery, ['Science']);
+
+    if (facultyReq.rows.length === 0) {
+      return res.status(404).json({ error: 'Science faculty requirements not found' });
+    }
+
+    const requirements = facultyReq.rows[0];
+
+    res.json({
+      facultyName: requirements.faculty_name,
+      totalCoursesRequired: requirements.total_courses_required,
+      minUpperLevelCourses: requirements.min_upper_level_courses,
+      minFacultyCourses: requirements.min_faculty_courses
+    });
+  } catch (error) {
+    console.error('Error fetching Science faculty requirements:', error);
+    res.status(500).json({ error: 'An error occurred while fetching Science faculty requirements' });
+  } finally {
+    client.release();
+  }
+});
+
+app.get('/api/junior-core-requirements', async (req, res) => {
+  const client = await poolCourseReq.connect();
+  try {
+    const jrReqQuery = 'SELECT * FROM JrReq';
+    const result = await client.query(jrReqQuery);
+    
+    // Group the requirements by category
+    const groupedRequirements = result.rows.reduce((acc, req) => {
+      if (!acc[req.category]) {
+        acc[req.category] = [];
+      }
+      acc[req.category].push({
+        course_letter: req.course_letter,
+        course_number: req.course_number
+      });
+      return acc;
+    }, {});
+
+    res.json(groupedRequirements);
+  } catch (error) {
+    console.error('Error fetching junior core requirements:', error);
+    res.status(500).json({ error: 'An error occurred while fetching junior core requirements' });
+  } finally {
+    client.release();
+  }
+});
+
+
+app.get('/api/requirements/:minor/minor', async (req, res) => {
+  const { minor } = req.params;
+  const client = await poolCourseReq.connect();
+  try {
+    const minorReqQuery = 'SELECT * FROM ScienceMinorReq WHERE minor_name = $1';
+    
+    const minorReq = await client.query(minorReqQuery, [minor]);
+
+    // Group minor requirements by level_group
+    const groupedMinorReq = minorReq.rows.reduce((acc, req) => {
+      if (!acc[req.level_group]) {
+        acc[req.level_group] = [];
+      }
+      acc[req.level_group].push({
+        course_letter: req.course_letter,
+        course_number: req.course_number,
+        course_group: req.course_group,
+        completed: false // Initialize as not completed
+      });
+      return acc;
+    }, {});
+
+    res.json({
+      minorRequirements: groupedMinorReq
+    });
+  } catch (error) {
+    console.error('Error fetching minor requirements:', error);
+    res.status(500).json({ error: 'An error occurred while fetching minor requirements' });
+  } finally {
+    client.release();
+  }
+});
 
 // Data upload endpoint
 app.post('/api/upload', async (req, res) => {
