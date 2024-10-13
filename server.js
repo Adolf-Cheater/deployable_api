@@ -18,7 +18,7 @@ const app = express();
 
 // Use body-parser middleware to parse JSON bodies
 app.use(bodyParser.json());
-
+app.use(express.json());
 app.use(cors());
 
 // Configure PostgreSQL connection
