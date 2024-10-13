@@ -6,6 +6,8 @@ dotenv.config();
 
 const pc = new Pinecone();
 const index = pc.Index("bearpath");
+const openaiApiKey = process.env.OPENAI_API_KEY;
+const pineconeApiKey = process.env.PINECONE_API_KEY;
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -53,8 +55,8 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'OK', message: 'Server is running' });
 });
 
-app.get('/api/query', async (req, res) => {
-  const { question } = req.query;
+app.post('/api/query', async (req, res) => {
+  const { question } = req.body;
   
   if (!question) {
     return res.status(400).json({ error: 'Question is required' });
