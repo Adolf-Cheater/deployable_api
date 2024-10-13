@@ -980,6 +980,12 @@ app.get('/api/top-enrolled', async (req, res) => {
   }
 });
 
+
+app.use((req, res) => {
+  console.log(`Unhandled request: ${req.method} ${req.path}`);
+  res.status(404).send('Not Found');
+});
+
 // Start the server
 const PORT = process.env.PORT || 8000;
 app.listen(PORT, () => {
