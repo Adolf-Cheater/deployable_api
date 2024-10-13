@@ -55,7 +55,7 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'OK', message: 'Server is running' });
 });
 
-aapp.post('/api/query', async (req, res) => {
+app.post('/api/query', async (req, res) => {
   console.log("POST /api/query called");
 
   const { question } = req.body;
